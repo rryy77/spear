@@ -32,7 +32,7 @@
 - **FPS視点** — 自分の手と槍が見える一人称視点
 - **血の演出** — 被弾すると画面端からじわじわ血が広がる
 
-## 起動方法
+## 起動方法（ローカル）
 
 ```bash
 npm install
@@ -42,6 +42,45 @@ npm start
 ブラウザで `http://localhost:3000` を開きます。
 
 **2人で遊ぶ場合:** 別々の端末（スマホ2台など）から同じサーバーURLにアクセスしてください。同一Wi-Fi内なら `http://<PCのIP>:3000` を使えます。
+
+## Vercel へのデプロイ（重要）
+
+Vercel は **WebSocket の常時接続に対応していません**。  
+`wss://...vercel.app` へ接続すると HTTP 200 が返り、次のエラーになります:
+
+```
+WebSocket handshake: Unexpected response code: 200
+```
+
+そのため **フロント（Vercel）とゲームサーバー（Render 等）を分けて** デプロイします。
+
+### 手順
+
+1. **ゲームサーバーを Render にデプロイ**
+   - [Render](https://render.com) で New → Blueprint または Web Service
+   - リポジトリ `spear` を接続
+   - `render.yaml` が自動適用されます（または Start Command: `npm start`）
+   - デプロイ後の URL を控える（例: `https://spear-api.onrender.com`）
+
+2. **Vercel にフロントをデプロイ**
+   - Application Preset: **Other**
+   - Build Command: 空欄
+   - Output Directory: 空欄
+
+3. **Vercel の環境変数を設定**
+   - Settings → Environment Variables
+   - `WS_URL` = `wss://spear-api.onrender.com`（Render の URL。`https` を `wss` に変える）
+   - 再デプロイする
+
+4. ブラウザで `https://spear-beta.vercel.app` を開き、「接続済み」と表示されれば成功
+
+### 構成イメージ
+
+```
+スマホ/PC  →  Vercel（HTML/CSS/JS）
+                ↓ WS_URL
+             Render（server.js + WebSocket）
+```
 
 ## ファイル構成
 

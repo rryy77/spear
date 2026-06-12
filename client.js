@@ -44,13 +44,33 @@ const heldDirs = new Set();
 let aimTimerInterval = null;
 
 // ── WebSocket ───────────────────────────────────────────
-function wsUrl() {
+async function getWsUrl() {
+  if (window.__WS_URL__) {
+    return String(window.__WS_URL__).replace(/\/$/, '');
+  }
+  try {
+    const res = await fetch('/api/config');
+    if (res.ok) {
+      const data = await res.json();
+      if (data.wsUrl) return data.wsUrl.replace(/\/$/, '');
+    }
+  } catch {
+    // ローカル開発など /api/config が無い場合は同一ホストへ接続
+  }
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   return `${proto}//${location.host}`;
 }
 
-function connect() {
-  app.ws = new WebSocket(wsUrl());
+async function connect() {
+  const url = await getWsUrl();
+
+  if (!url) {
+    setStatus('WebSocketサーバー未設定（Vercelの WS_URL を設定してください）');
+    setTimeout(connect, 5000);
+    return;
+  }
+
+  app.ws = new WebSocket(url);
 
   app.ws.onopen = () => {
     setStatus('接続済み');
@@ -61,7 +81,9 @@ function connect() {
     setTimeout(connect, 2000);
   };
 
-  app.ws.onerror = () => setStatus('接続エラー');
+  app.ws.onerror = () => {
+    setStatus('接続エラー — ゲームサーバーに届いていません');
+  };
 
   app.ws.onmessage = (e) => {
     const msg = JSON.parse(e.data);

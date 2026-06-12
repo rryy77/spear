@@ -14,6 +14,18 @@ const wss = new WebSocketServer({ server });
 
 app.use(express.static(path.join(__dirname)));
 
+app.get('/health', (_req, res) => {
+  res.json({ ok: true });
+});
+
+app.get('/api/config', (req, res) => {
+  const host = req.get('host');
+  const proto = req.get('x-forwarded-proto') || req.protocol;
+  const defaultUrl = host ? `${proto === 'https' ? 'wss' : 'ws'}://${host}` : '';
+  const wsUrl = (process.env.WS_URL || defaultUrl).replace(/\/$/, '');
+  res.json({ wsUrl });
+});
+
 const rooms = new Map();
 
 function generateRoomCode() {
