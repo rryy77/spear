@@ -5,9 +5,10 @@ const PHASE = {
   COUNTDOWN: 'countdown', CHARGE: 'charge', RESULT: 'result', FINISHED: 'finished',
 };
 
-const MOVE_SPEED = 0.022;
-const HEIGHT_SPEED = 0.035;
+const MOVE_SPEED = 0.024;
+const HEIGHT_SPEED = 0.009;
 const AIM_SEND_INTERVAL = 80;
+const AIM_DURATION = 8000;
 
 const canvas = document.getElementById('game-canvas');
 const bloodOverlay = document.getElementById('blood-overlay');
@@ -36,9 +37,11 @@ const app = {
   phaseEndsAt: 0,
   lastAimSend: 0,
   shake: 0,
+  stabT: 0,
 };
 
-const heldDirs = new Set();
+const joystick = { active: false, dx: 0, id: null };
+const heldAngle = { up: false, down: false };
 let tickInterval = null;
 
 // ── WebSocket ───────────────────────────────────────────
@@ -200,12 +203,23 @@ document.getElementById('btn-back-lobby').addEventListener('click', () => { send
 
 // ── Game phases ─────────────────────────────────────────
 function initRenderer() {
-  if (!fps) fps = new FPSRenderer(canvas);
+  if (fps) return;
+  fps = new FPSRenderer(canvas, app.role);
   fps.resize();
   if (typeof ResizeObserver !== 'undefined') {
     new ResizeObserver(() => fps?.resize()).observe(canvas);
   }
+  checkOrientation();
+  try { screen.orientation?.lock?.('landscape').catch(() => {}); } catch { /* noop */ }
 }
+
+function checkOrientation() {
+  const hint = document.getElementById('rotate-hint');
+  const isPortrait = window.innerHeight > window.innerWidth;
+  hint?.classList.toggle('hidden', !isPortrait);
+}
+window.addEventListener('resize', checkOrientation);
+window.addEventListener('orientationchange', checkOrientation);
 
 function showBanner(text, ms = 0) {
   phaseBanner.textContent = text;
@@ -218,7 +232,7 @@ function onGameIntro(msg) {
   app.phase = PHASE.INTRO;
   app.phaseEndsAt = msg.endsAt;
   showBanner(`⚔ 第${msg.round}試合 — ${msg.message}`, 0);
-  document.getElementById('hud-objective').textContent = '両騎士、リストの端へ';
+  document.getElementById('hud-objective').textContent = '中央の壁を挟んで配置 — 3秒後に突撃';
   document.getElementById('hud-round').textContent = `ROUND ${msg.round}`;
   aimBarWrap.classList.add('hidden');
   countdownOverlay.classList.add('hidden');
@@ -241,7 +255,7 @@ function onRoundStart(msg) {
 
   phaseBanner.classList.add('hidden');
   showBanner('構え — 槍の高さと左右を調整', 0);
-  document.getElementById('hud-objective').textContent = '構え — 10秒で自動突撃';
+  document.getElementById('hud-objective').textContent = '構え — 8秒後に3秒カウント→突撃';
   aimBarWrap.classList.remove('hidden');
   countdownOverlay.classList.add('hidden');
   document.getElementById('result-toast').classList.add('hidden');
@@ -337,7 +351,7 @@ function tickHUD() {
   const left = Math.max(0, app.phaseEndsAt - Date.now());
 
   if (app.phase === PHASE.AIM) {
-    const total = 10000;
+    const total = AIM_DURATION;
     const pct = Math.min(100, ((total - left) / total) * 100);
     aimBar.style.width = `${pct}%`;
     const sec = Math.ceil(left / 1000);
@@ -380,25 +394,95 @@ function fadeBlood() {
   setTimeout(() => { bloodOverlay.classList.remove('fade'); bloodOverlay.style.opacity = '0'; }, 4000);
 }
 
-// ── Input ─────────────────────────────────────────────
-document.querySelectorAll('.arrow-btn').forEach(btn => {
-  const dir = btn.dataset.dir;
-  const press = (e) => { e.preventDefault(); heldDirs.add(dir); btn.classList.add('pressed'); };
-  const release = (e) => { e.preventDefault(); heldDirs.delete(dir); btn.classList.remove('pressed'); };
-  btn.addEventListener('touchstart', press, { passive: false });
-  btn.addEventListener('touchend', release, { passive: false });
-  btn.addEventListener('touchcancel', release, { passive: false });
-  btn.addEventListener('mousedown', press);
-  btn.addEventListener('mouseup', release);
-  btn.addEventListener('mouseleave', release);
+// ── Joystick（横移動のみ）──────────────────────────────
+const joyBase = document.getElementById('joystick-base');
+const joyKnob = document.getElementById('joystick-knob');
+const JOY_RADIUS = 42;
+
+function joyPos(clientX, clientY) {
+  const rect = joyBase.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2;
+  const cy = rect.top + rect.height / 2;
+  let dx = clientX - cx;
+  let dy = clientY - cy;
+  dy = 0;
+  const dist = Math.abs(dx);
+  if (dist > JOY_RADIUS) dx = (dx / dist) * JOY_RADIUS;
+  joyKnob.style.transform = `translate(${dx}px, 0)`;
+  joystick.dx = dx / JOY_RADIUS;
+}
+
+function joyReset() {
+  joystick.active = false;
+  joystick.dx = 0;
+  joystick.id = null;
+  joyKnob.style.transform = 'translate(0, 0)';
+}
+
+joyBase.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  joystick.active = true;
+  joystick.id = e.changedTouches[0].identifier;
+  joyPos(e.changedTouches[0].clientX, e.changedTouches[0].clientY);
+}, { passive: false });
+
+joyBase.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    if (t.identifier === joystick.id) joyPos(t.clientX, t.clientY);
+  }
+}, { passive: false });
+
+joyBase.addEventListener('touchend', (e) => {
+  for (const t of e.changedTouches) {
+    if (t.identifier === joystick.id) joyReset();
+  }
 });
 
+joyBase.addEventListener('mousedown', (e) => {
+  joystick.active = true;
+  joyPos(e.clientX, e.clientY);
+  const onMove = (ev) => joyPos(ev.clientX, ev.clientY);
+  const onUp = () => { joyReset(); window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+  window.addEventListener('mousemove', onMove);
+  window.addEventListener('mouseup', onUp);
+});
+
+// ── アクションボタン ────────────────────────────────────
+function bindBtn(id, key, onTap) {
+  const btn = document.getElementById(id);
+  const press = (e) => { e.preventDefault(); heldAngle[key] = true; btn.classList.add('pressed'); };
+  const release = (e) => { e.preventDefault(); heldAngle[key] = false; btn.classList.remove('pressed'); };
+  btn.addEventListener('touchstart', (e) => { press(e); onTap?.(); }, { passive: false });
+  btn.addEventListener('touchend', release, { passive: false });
+  btn.addEventListener('mousedown', (e) => { press(e); onTap?.(); });
+  btn.addEventListener('mouseup', release);
+  btn.addEventListener('mouseleave', release);
+}
+
+bindBtn('btn-angle-up', 'up');
+bindBtn('btn-angle-down', 'down');
+
+const stabBtn = document.getElementById('btn-stab');
+function doStab() {
+  if (app.phase !== PHASE.AIM && app.phase !== PHASE.CHARGE) return;
+  app.stabT = 0.35;
+  send('stab');
+}
+stabBtn.addEventListener('touchstart', (e) => { e.preventDefault(); stabBtn.classList.add('pressed'); doStab(); }, { passive: false });
+stabBtn.addEventListener('touchend', () => stabBtn.classList.remove('pressed'));
+stabBtn.addEventListener('mousedown', () => { stabBtn.classList.add('pressed'); doStab(); });
+stabBtn.addEventListener('mouseup', () => stabBtn.classList.remove('pressed'));
+
 function applyInput() {
-  if (app.phase !== PHASE.AIM) return;
-  if (heldDirs.has('left'))  app.x = Math.max(0.1, app.x - MOVE_SPEED);
-  if (heldDirs.has('right')) app.x = Math.min(0.9, app.x + MOVE_SPEED);
-  if (heldDirs.has('up'))    app.height = Math.max(0.05, app.height - HEIGHT_SPEED);
-  if (heldDirs.has('down'))  app.height = Math.min(0.95, app.height + HEIGHT_SPEED);
+  const canControl = app.phase === PHASE.AIM || app.phase === PHASE.CHARGE;
+  if (!canControl) return;
+
+  if (joystick.dx !== 0) {
+    app.x = Math.max(0.1, Math.min(0.9, app.x + joystick.dx * MOVE_SPEED));
+  }
+  if (heldAngle.up)   app.height = Math.max(0.05, app.height - HEIGHT_SPEED);
+  if (heldAngle.down) app.height = Math.min(0.95, app.height + HEIGHT_SPEED);
 
   const now = performance.now();
   if (now - app.lastAimSend > AIM_SEND_INTERVAL) {
@@ -422,7 +506,10 @@ function loop() {
       height: app.height,
       chargeT: app.chargeT,
       shake: app.shake,
+      stabT: app.stabT,
+      playerSide: app.role,
     });
+    if (app.stabT > 0) app.stabT -= 0.016;
     fps.updateDust();
     fps.render();
   }

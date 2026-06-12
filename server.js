@@ -5,8 +5,8 @@ const path = require('path');
 const crypto = require('crypto');
 
 const PORT = process.env.PORT || 3000;
-const INTRO_MS = 2500;
-const AIM_DURATION_MS = 10000;
+const INTRO_MS = 2000;
+const AIM_DURATION_MS = 8000;
 const COUNTDOWN_MS = 3000;
 const CHARGE_DURATION_MS = 3000;
 const RESULT_PAUSE_MS = 4500;
@@ -50,6 +50,7 @@ function createPlayer(ws, name) {
     x: 0.5,
     height: 0.5,
     armor: defaultArmor(),
+    stab: false,
   };
 }
 
@@ -78,8 +79,9 @@ function heightToZone(h) {
   return 'legs';
 }
 
-function calcHitQuality(attackerX, defenderX) {
-  const gap = Math.abs(attackerX - defenderX);
+function calcHitQuality(attacker, defender) {
+  let gap = Math.abs(attacker.x - defender.x);
+  if (attacker.stab) gap *= 0.82;
   if (gap < 0.09) return 100;
   if (gap < 0.2) return 50;
   if (gap < 0.32) return 33;
@@ -87,7 +89,7 @@ function calcHitQuality(attackerX, defenderX) {
 }
 
 function resolveAttack(attacker, defender) {
-  const damage = calcHitQuality(attacker.x, defender.x);
+  const damage = calcHitQuality(attacker, defender);
   const zone = heightToZone(attacker.height);
   if (damage > 0) {
     defender.armor[zone] = Math.max(0, defender.armor[zone] - damage);
@@ -154,6 +156,8 @@ function beginCharge(room) {
 
   const hostHitsGuest = resolveAttack(room.host, room.guest);
   const guestHitsHost = resolveAttack(room.guest, room.host);
+  room.host.stab = false;
+  room.guest.stab = false;
   room.pendingResult = { hostHitsGuest, guestHitsHost };
 
   broadcastRoom(room, 'charge_start', {
@@ -308,11 +312,21 @@ wss.on('connection', (ws) => {
 
       case 'update_aim': {
         const room = rooms.get(roomCode);
-        if (!room || room.phase !== 'aim') return;
+        if (!room || (room.phase !== 'aim' && room.phase !== 'charge')) return;
         const player = role === 'host' ? room.host : room.guest;
         if (!player) return;
         player.x = clamp(msg.x ?? player.x, 0.1, 0.9);
         player.height = clamp(msg.height ?? player.height, 0.05, 0.95);
+        break;
+      }
+
+      case 'stab': {
+        const room = rooms.get(roomCode);
+        if (!room || (room.phase !== 'aim' && room.phase !== 'charge')) return;
+        const player = role === 'host' ? room.host : room.guest;
+        if (!player) return;
+        player.stab = true;
+        setTimeout(() => { player.stab = false; }, 400);
         break;
       }
 

@@ -2,7 +2,8 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="screen-orientation" content="landscape">
   <title>ROCK YOU! — 馬上槍試合</title>
   <link rel="stylesheet" href="style.css">
 </head>
@@ -13,8 +14,9 @@
       <h1>ROCK YOU!</h1>
       <p class="subtitle">14世紀・馬上槍試合 — オンライン対戦</p>
       <p class="rules-hint">
-        騎士Aと騎士Bがリストの両端から向かい合い、<br>
-        一斉に突撃して槍を突き合わせます。
+        騎士Aと騎士Bが中央の壁を挟んで向かい合い、<br>
+        一斉に突撃して槍を突き合わせます。<br>
+        <strong>横画面</strong>でプレイしてください。
       </p>
 
       <div id="lobby-menu">
@@ -105,14 +107,23 @@
       </div>
     </div>
 
-    <div class="controls" id="game-controls">
-      <p class="ctrl-hint">◀▶ 左右　▲▼ 槍の高さ</p>
-      <button class="arrow-btn" data-dir="up">▲</button>
-      <div class="arrow-row">
-        <button class="arrow-btn" data-dir="left">◀</button>
-        <button class="arrow-btn" data-dir="down">▼</button>
-        <button class="arrow-btn" data-dir="right">▶</button>
+    <!-- 左: ジョイスティック（横移動のみ） -->
+    <div id="joystick-zone">
+      <div id="joystick-base">
+        <div id="joystick-knob"></div>
       </div>
+      <span class="joy-label">移動</span>
+    </div>
+
+    <!-- 右: アクションボタン（eFootball風） -->
+    <div id="action-buttons">
+      <button id="btn-angle-up" class="act-btn act-sub" aria-label="槍を上げる">▲</button>
+      <button id="btn-stab" class="act-btn act-main" aria-label="刺す">刺す</button>
+      <button id="btn-angle-down" class="act-btn act-sub" aria-label="槍を下げる">▼</button>
+    </div>
+
+    <div id="rotate-hint" class="rotate-hint hidden">
+      <p>📱 端末を<strong>横向き</strong>にしてください</p>
     </div>
 
     <div id="result-toast" class="hidden"></div>
