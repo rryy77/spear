@@ -4,38 +4,26 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta name="screen-orientation" content="landscape">
-  <title>Joust Royale — オンライン馬上槍</title>
+  <title>馬上槍試合</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <!-- Lobby -->
   <div id="screen-lobby" class="screen active">
     <div class="lobby-card">
-      <h1>JOUST ROYALE</h1>
-      <p class="subtitle">オンライン1vs1 馬上槍 — 横画面推奨</p>
-      <p class="rules-hint">
-        ルームを作成するかコードで参加。<br>
-        2人揃ったら装備選択 → READY → 突撃！
-      </p>
+      <h1>馬上槍試合</h1>
+      <p class="subtitle">オンライン1vs1 — 横画面でプレイ</p>
 
       <div id="lobby-menu">
-        <input type="text" id="player-name" placeholder="騎士の名前" maxlength="12">
+        <input type="text" id="player-name" placeholder="名前" maxlength="12">
         <button id="btn-create" class="action-btn full">ルームを作成</button>
         <button id="btn-join-open" class="action-btn full secondary">ルームに参加</button>
       </div>
 
       <div id="lobby-join" class="hidden">
-        <p class="hint">ルームコードを入力</p>
-        <input type="text" id="room-code-input" placeholder="例: A1B2C3" maxlength="6" autocapitalize="characters">
+        <input type="text" id="room-code-input" placeholder="ルームコード" maxlength="6" autocapitalize="characters">
         <button id="btn-join" class="action-btn full">参加する</button>
         <button id="btn-join-back" class="text-btn">戻る</button>
-      </div>
-
-      <div id="lobby-waiting" class="hidden">
-        <p class="room-code-label">ルームコード</p>
-        <p class="room-code" id="display-code">------</p>
-        <p class="hint" id="waiting-message">対戦相手の参加を待っています…</p>
-        <button id="btn-leave" class="text-btn">ルームを退出</button>
       </div>
 
       <p id="lobby-error" class="error-msg hidden"></p>
@@ -43,97 +31,50 @@
     </div>
   </div>
 
-  <!-- Equipment -->
-  <div id="screen-equipment" class="screen">
-    <div class="equip-layout">
-      <header class="equip-header">
-        <h2>装備選択</h2>
-        <p class="equip-round" id="equip-round">ROUND 1</p>
-        <p class="equip-scores" id="equip-scores">0 — 0</p>
-      </header>
-
-      <div class="equip-grid">
-        <div class="equip-group" data-cat="horse">
-          <h3>馬</h3>
-          <div class="equip-options" id="opts-horse"></div>
-        </div>
-        <div class="equip-group" data-cat="lance">
-          <h3>槍</h3>
-          <div class="equip-options" id="opts-lance"></div>
-        </div>
-        <div class="equip-group" data-cat="armor">
-          <h3>鎧</h3>
-          <div class="equip-options" id="opts-armor"></div>
-        </div>
-        <div class="equip-group" data-cat="shield">
-          <h3>盾</h3>
-          <div class="equip-options" id="opts-shield"></div>
-        </div>
-      </div>
-
-      <div class="equip-footer">
-        <div class="opp-ready" id="opp-ready-status">相手: 装備選択中…</div>
-        <button id="btn-ready" class="action-btn ready-btn">READY</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Game -->
+  <!-- Game (1画面完結) -->
   <div id="screen-game" class="screen">
     <canvas id="game-canvas"></canvas>
 
     <div id="hud">
-      <div class="hud-topline">
-        <span id="hud-round">ROUND 1</span>
-        <span id="hud-score">0 — 0</span>
-        <span id="hud-role" class="hud-role">騎士</span>
-      </div>
-      <div class="hud-names">
-        <span id="my-name">自分</span>
-        <span id="opp-name">相手</span>
-      </div>
-      <div id="lance-height-bar" class="lance-bar-wrap">
-        <div id="lance-height-fill" class="lance-bar-fill"></div>
-        <span class="lance-bar-label">槍の高さ</span>
-      </div>
-      <div id="phase-banner" class="phase-banner hidden"></div>
       <div id="countdown-overlay" class="countdown-overlay hidden">
         <span id="countdown-num">3</span>
       </div>
-    </div>
 
-    <div id="joystick-zone">
-      <div id="joystick-base">
-        <div id="joystick-knob"></div>
+      <div id="verdict-display" class="verdict-display hidden">
+        <span id="verdict-text">PERFECT</span>
       </div>
-      <span class="joy-label">槍の高さ</span>
+
+      <div id="result-overlay" class="result-overlay hidden">
+        <h2 id="result-title">勝利！</h2>
+        <p id="result-detail"></p>
+        <button id="btn-rematch" class="action-btn">再戦</button>
+        <p id="rematch-status" class="rematch-hint hidden"></p>
+        <button id="btn-back-lobby" class="text-btn">ロビーへ</button>
+      </div>
+
+      <div id="ready-bar" class="ready-bar hidden">
+        <button id="btn-leave" class="text-btn leave-btn">退出</button>
+        <p id="opp-ready-hint">相手を待っています…</p>
+        <button id="btn-ready" class="action-btn ready-btn">READY</button>
+      </div>
     </div>
 
-    <div id="action-buttons">
-      <button id="btn-thrust" class="act-btn act-main" aria-label="突く">突く</button>
+    <!-- 槍の高さゲージ -->
+    <div id="lance-gauge" class="lance-gauge hidden">
+      <div class="gauge-zone zone-high">HIGH</div>
+      <div class="gauge-zone zone-perfect">PERFECT</div>
+      <div class="gauge-zone zone-low">LOW</div>
+      <div id="gauge-marker" class="gauge-marker"></div>
     </div>
 
-    <div id="result-toast" class="hidden"></div>
+    <div id="drag-hint" class="drag-hint hidden">上下にドラッグで槍の高さ</div>
+
     <div id="rotate-hint" class="rotate-hint hidden">
       <p>端末を<strong>横向き</strong>にしてください</p>
     </div>
   </div>
 
-  <!-- Result -->
-  <div id="screen-result" class="screen">
-    <div class="lobby-card result-card">
-      <h2 id="result-title">ラウンド結果</h2>
-      <p id="result-message"></p>
-      <div class="reward-box" id="reward-box"></div>
-      <p class="score-final" id="result-scores"></p>
-      <button id="btn-rematch" class="action-btn full">再戦</button>
-      <p id="rematch-status" class="hint hidden"></p>
-      <button id="btn-back-lobby" class="text-btn">ロビーに戻る</button>
-    </div>
-  </div>
-
   <script src="/shared/constants.js"></script>
-  <script src="/shared/equipment.js"></script>
   <script src="/shared/sim.js"></script>
   <script src="renderer2d.js"></script>
   <script src="client.js"></script>

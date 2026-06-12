@@ -1,20 +1,19 @@
-// Joust Royale — オンライン1vs1
+// 馬上槍試合 — オンライン1vs1
 
 const PHASE = {
   LOBBY: 'lobby',
-  EQUIPMENT: 'equipment',
+  WAITING: 'waiting',
   COUNTDOWN: 'countdown',
   CHARGE: 'charge',
   RESULT: 'result',
   FINISHED: 'finished',
 };
 
-const { EQUIPMENT, DEFAULT_EQUIPMENT } = JoustEquipment;
 const Sim = JoustSim;
-
-const LANCE_SEND_INTERVAL = 120;
+const LANCE_SEND_INTERVAL = 100;
 
 const canvas = document.getElementById('game-canvas');
+const gameScreen = document.getElementById('screen-game');
 let renderer = null;
 let rafId = null;
 
@@ -25,24 +24,17 @@ const app = {
   playerName: '',
   opponentName: '',
   phase: PHASE.LOBBY,
-  round: 1,
-  scores: { host: 0, guest: 0 },
-  selectedEquipment: { ...DEFAULT_EQUIPMENT },
-  oppEquipment: { ...DEFAULT_EQUIPMENT },
   myReady: false,
   oppReady: false,
   matchStartTime: 0,
-  chargeDuration: Sim.CHARGE_MS,
   lanceHeight: 0.5,
   oppLanceHeight: 0.5,
-  lanceActionTiming: null,
   countdownEndsAt: 0,
   lastLanceSend: 0,
   impactFlash: 0,
   rematchSent: false,
+  drag: { active: false, id: null, lastY: 0 },
 };
-
-const joystick = { active: false, id: null, smoothY: 0.5 };
 
 // ── WebSocket ───────────────────────────────────────────
 async function getWsUrl() {
@@ -61,13 +53,13 @@ async function getWsUrl() {
 async function connect() {
   const url = await getWsUrl();
   if (!url) {
-    setStatus('WebSocketサーバー未設定');
+    setStatus('WebSocket未設定');
     setTimeout(connect, 5000);
     return;
   }
   app.ws = new WebSocket(url);
   app.ws.onopen = () => setStatus('接続済み');
-  app.ws.onclose = () => { setStatus('切断 — 再接続中…'); setTimeout(connect, 2000); };
+  app.ws.onclose = () => { setStatus('再接続中…'); setTimeout(connect, 2000); };
   app.ws.onerror = () => setStatus('接続エラー');
   app.ws.onmessage = (e) => handleMessage(JSON.parse(e.data));
 }
@@ -84,21 +76,20 @@ function handleMessage(msg) {
     case 'room_created':
       app.role = msg.role;
       app.roomCode = msg.code;
-      showWaiting(msg.code, true);
+      showLobbyWaiting(msg.code);
       break;
     case 'room_joined':
       app.role = msg.role;
       app.roomCode = msg.code;
-      showWaiting(msg.code, false);
       break;
     case 'player_joined':
-      document.getElementById('waiting-message').textContent = `${msg.guestName} が参加！`;
+      app.opponentName = msg.guestName;
       break;
-    case 'phase_equipment':
-      onPhaseEquipment(msg);
+    case 'phase_waiting':
+      onPhaseWaiting(msg);
       break;
-    case 'equipment_update':
-      onEquipmentUpdate(msg);
+    case 'ready_update':
+      onReadyUpdate(msg);
       break;
     case 'match_countdown':
       onMatchCountdown(msg);
@@ -107,15 +98,16 @@ function handleMessage(msg) {
       onMatchStart(msg);
       break;
     case 'lance_update':
-      if (msg.role !== app.role && typeof msg.lanceHeight === 'number') {
-        app.oppLanceHeight = msg.lanceHeight;
-      }
+      if (msg.role !== app.role) app.oppLanceHeight = msg.lanceHeight;
       break;
     case 'impact_result':
       onImpactResult(msg);
       break;
     case 'match_result':
       onMatchResult(msg);
+      break;
+    case 'phase_finished':
+      onPhaseFinished();
       break;
     case 'rematch_state':
       onRematchState(msg);
@@ -130,7 +122,7 @@ function handleMessage(msg) {
   }
 }
 
-// ── Lobby ─────────────────────────────────────────────
+// ── Screens ───────────────────────────────────────────
 function showScreen(name) {
   document.querySelectorAll('.screen').forEach((s) => s.classList.remove('active'));
   document.getElementById(`screen-${name}`).classList.add('active');
@@ -149,19 +141,20 @@ function setStatus(t) {
 
 function showError(msg) {
   const el = document.getElementById('lobby-error');
+  if (!el) return;
   el.textContent = msg;
   el.classList.remove('hidden');
   setTimeout(() => el.classList.add('hidden'), 4000);
 }
 
-function showWaiting(code, isHost) {
+function showLobbyWaiting(code) {
   document.getElementById('lobby-menu').classList.add('hidden');
   document.getElementById('lobby-join').classList.add('hidden');
-  document.getElementById('lobby-waiting').classList.remove('hidden');
-  document.getElementById('display-code').textContent = code;
-  document.getElementById('waiting-message').textContent = isHost
-    ? '対戦相手の参加を待っています…'
-    : '装備選択へ移動します…';
+  const wait = document.createElement('p');
+  wait.className = 'hint';
+  wait.id = 'waiting-code';
+  wait.textContent = `コード: ${code} — 相手を待っています…`;
+  document.querySelector('.lobby-card').appendChild(wait);
 }
 
 function resetToLobby() {
@@ -170,179 +163,132 @@ function resetToLobby() {
   app.role = null;
   app.roomCode = null;
   app.rematchSent = false;
-  document.getElementById('lobby-menu').classList.remove('hidden');
-  document.getElementById('lobby-join').classList.add('hidden');
-  document.getElementById('lobby-waiting').classList.add('hidden');
-  document.getElementById('btn-ready').textContent = 'READY';
-  document.getElementById('btn-ready').classList.remove('ready-on');
+  document.getElementById('lobby-menu')?.classList.remove('hidden');
+  document.getElementById('lobby-join')?.classList.add('hidden');
+  document.getElementById('waiting-code')?.remove();
+  hideAllOverlays();
   showScreen('lobby');
 }
 
-// ── Equipment ─────────────────────────────────────────
-function buildEquipmentUI() {
-  const cats = ['horse', 'lance', 'armor', 'shield'];
-  const keys = { horse: 'horses', lance: 'lances', armor: 'armors', shield: 'shields' };
-  for (const cat of cats) {
-    const container = document.getElementById(`opts-${cat}`);
-    container.innerHTML = '';
-    const items = EQUIPMENT[keys[cat]];
-    for (const [id, item] of Object.entries(items)) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'equip-opt';
-      btn.dataset.cat = cat;
-      btn.dataset.id = id;
-      btn.textContent = item.name;
-      if (app.selectedEquipment[cat] === id) btn.classList.add('selected');
-      btn.addEventListener('click', () => selectEquipment(cat, id));
-      container.appendChild(btn);
-    }
-  }
-}
-
-function selectEquipment(cat, id) {
-  app.selectedEquipment[cat] = id;
-  app.myReady = false;
-  document.querySelectorAll(`.equip-opt[data-cat="${cat}"]`).forEach((b) => {
-    b.classList.toggle('selected', b.dataset.id === id);
-  });
-  document.getElementById('btn-ready').textContent = 'READY';
+function hideAllOverlays() {
+  document.getElementById('ready-bar').classList.add('hidden');
+  document.getElementById('lance-gauge').classList.add('hidden');
+  document.getElementById('drag-hint').classList.add('hidden');
+  document.getElementById('countdown-overlay').classList.add('hidden');
+  document.getElementById('verdict-display').classList.add('hidden');
+  document.getElementById('result-overlay').classList.add('hidden');
   document.getElementById('btn-ready').classList.remove('ready-on');
-  send('set_equipment', { selectedEquipment: app.selectedEquipment });
-}
-
-function updateEquipReadyUI() {
-  const btn = document.getElementById('btn-ready');
-  btn.textContent = app.myReady ? 'READY ✓' : 'READY';
-  btn.classList.toggle('ready-on', app.myReady);
-  const opp = document.getElementById('opp-ready-status');
-  opp.textContent = app.oppReady ? '相手: READY' : '相手: 装備選択中…';
-}
-
-function onPhaseEquipment(msg) {
-  app.phase = PHASE.EQUIPMENT;
-  app.round = msg.round ?? 1;
-  app.scores = msg.scores ?? { host: 0, guest: 0 };
-  if (msg.host) {
-    if (app.role === 'host') {
-      app.selectedEquipment = { ...msg.host.equipment };
-      app.myReady = msg.host.ready;
-      app.playerName = msg.host.name;
-    } else {
-      app.oppEquipment = { ...msg.host.equipment };
-      app.oppReady = msg.host.ready;
-      app.opponentName = msg.host.name;
-    }
-  }
-  if (msg.guest) {
-    if (app.role === 'guest') {
-      app.selectedEquipment = { ...msg.guest.equipment };
-      app.myReady = msg.guest.ready;
-      app.playerName = msg.guest.name;
-    } else {
-      app.oppEquipment = { ...msg.guest.equipment };
-      app.oppReady = msg.guest.ready;
-      app.opponentName = msg.guest.name;
-    }
-  }
-  document.getElementById('equip-round').textContent = `ROUND ${app.round}`;
-  document.getElementById('equip-scores').textContent = `${app.scores.host} — ${app.scores.guest}`;
-  buildEquipmentUI();
-  updateEquipReadyUI();
-  showScreen('equipment');
-}
-
-function onEquipmentUpdate(msg) {
-  if (msg.scores) app.scores = msg.scores;
-  if (msg.round) app.round = msg.round;
-  document.getElementById('equip-scores').textContent = `${app.scores.host} — ${app.scores.guest}`;
-  const other = msg.role === 'host' ? 'guest' : 'host';
-  if (app.role === other) {
-    app.oppReady = msg.ready;
-    if (msg.selectedEquipment) app.oppEquipment = { ...msg.selectedEquipment };
-  } else {
-    app.myReady = msg.ready;
-    if (msg.selectedEquipment) app.selectedEquipment = { ...msg.selectedEquipment };
-    buildEquipmentUI();
-  }
-  updateEquipReadyUI();
+  document.getElementById('btn-ready').textContent = 'READY';
 }
 
 // ── Match flow ────────────────────────────────────────
-function onMatchCountdown(msg) {
-  app.phase = PHASE.COUNTDOWN;
-  app.countdownEndsAt = msg.endsAt;
-  document.getElementById('my-name').textContent = app.playerName || (app.role === 'host' ? '騎士A' : '騎士B');
-  document.getElementById('opp-name').textContent = app.opponentName || '相手';
-  document.getElementById('hud-round').textContent = `ROUND ${app.round}`;
-  document.getElementById('hud-score').textContent = `${app.scores.host} — ${app.scores.guest}`;
-  document.getElementById('hud-role').textContent = app.role === 'host' ? '左陣' : '右陣';
+function enterGameScreen() {
   showScreen('game');
   if (!renderer) renderer = createRenderer2D(canvas);
   renderer.resize();
   startGameLoop();
-  showBanner('突撃準備 — 槍の高さを合わせろ');
+}
+
+function onPhaseWaiting(msg) {
+  app.phase = PHASE.WAITING;
+  app.myReady = false;
+  app.oppReady = false;
+  app.lanceHeight = 0.5;
+  if (msg.host) {
+    if (app.role === 'host') {
+      app.playerName = msg.host.name;
+      app.myReady = msg.host.ready;
+    } else {
+      app.opponentName = msg.host.name;
+      app.oppReady = msg.host.ready;
+    }
+  }
+  if (msg.guest) {
+    if (app.role === 'guest') {
+      app.playerName = msg.guest.name;
+      app.myReady = msg.guest.ready;
+    } else {
+      app.opponentName = msg.guest.name;
+      app.oppReady = msg.guest.ready;
+    }
+  }
+  hideAllOverlays();
+  document.getElementById('ready-bar').classList.remove('hidden');
+  updateReadyUI();
+  enterGameScreen();
+}
+
+function onReadyUpdate(msg) {
+  if (msg.host) {
+    if (app.role === 'host') app.myReady = msg.host.ready;
+    else app.oppReady = msg.host.ready;
+  }
+  if (msg.guest) {
+    if (app.role === 'guest') app.myReady = msg.guest.ready;
+    else app.oppReady = msg.guest.ready;
+  }
+  updateReadyUI();
+}
+
+function updateReadyUI() {
+  const btn = document.getElementById('btn-ready');
+  btn.textContent = app.myReady ? 'READY ✓' : 'READY';
+  btn.classList.toggle('ready-on', app.myReady);
+  document.getElementById('opp-ready-hint').textContent =
+    app.oppReady ? '相手 READY — まもなく開始' : '相手の READY を待っています…';
+}
+
+function onMatchCountdown(msg) {
+  app.phase = PHASE.COUNTDOWN;
+  app.countdownEndsAt = msg.endsAt;
+  document.getElementById('ready-bar').classList.add('hidden');
+  document.getElementById('countdown-overlay').classList.remove('hidden');
 }
 
 function onMatchStart(msg) {
   app.phase = PHASE.CHARGE;
   app.matchStartTime = msg.matchStartTime;
-  app.chargeDuration = msg.chargeDuration ?? Sim.CHARGE_MS;
-  app.round = msg.round ?? app.round;
   app.lanceHeight = 0.5;
   app.oppLanceHeight = 0.5;
-  app.lanceActionTiming = null;
-  joystick.smoothY = 0.5;
-  hideCountdown();
-  showBanner('突撃！');
+  document.getElementById('countdown-overlay').classList.add('hidden');
+  document.getElementById('lance-gauge').classList.remove('hidden');
+  document.getElementById('drag-hint').classList.remove('hidden');
+  updateGauge();
 }
 
 function onImpactResult(msg) {
   app.impactFlash = 1;
-  const h = msg.impactResult?.hostHit;
-  const g = msg.impactResult?.guestHit;
-  const myHit = app.role === 'host' ? h : g;
-  const oppHit = app.role === 'host' ? g : h;
-  showToast(`命中 ${myHit?.damage ?? 0} / 被弾 ${oppHit?.damage ?? 0}`);
-  if (msg.scores) app.scores = msg.scores;
+  const ir = msg.impactResult;
+  const myTier = app.role === 'host' ? ir.hostTier : ir.guestTier;
+  const oppTier = app.role === 'host' ? ir.guestTier : ir.hostTier;
+  showVerdict(myTier, oppTier);
 }
 
 function onMatchResult(msg) {
-  app.phase = msg.gameOver ? PHASE.FINISHED : PHASE.RESULT;
-  if (msg.scores) app.scores = msg.scores;
-  app.rematchSent = false;
+  app.phase = PHASE.RESULT;
+  const ir = msg.impactResult;
+  const won = msg.winner === app.role;
+  const draw = !msg.winner;
+  const myTier = app.role === 'host' ? ir.hostTier : ir.guestTier;
+  const oppTier = app.role === 'host' ? ir.guestTier : ir.hostTier;
 
-  const won = msg.matchWinner === app.role;
-  const roundWon = msg.roundWinner === app.role;
-  let title = roundWon ? 'ラウンド勝利！' : (msg.roundWinner ? 'ラウンド敗北' : '引き分け');
-  if (msg.gameOver && msg.matchWinner) {
-    title = won ? '試合勝利！' : '試合敗北…';
-  } else if (msg.gameOver) {
-    title = '試合終了';
-  }
+  document.getElementById('drag-hint').classList.add('hidden');
+  document.getElementById('lance-gauge').classList.add('hidden');
 
-  document.getElementById('result-title').textContent = title;
-  const h = msg.impactResult?.hostHit;
-  const g = msg.impactResult?.guestHit;
-  document.getElementById('result-message').textContent =
-    `与ダメージ ${app.role === 'host' ? h?.damage : g?.damage} / ` +
-    `被ダメージ ${app.role === 'host' ? g?.damage : h?.damage}`;
+  setTimeout(() => {
+    document.getElementById('result-title').textContent =
+      draw ? '引き分け' : (won ? '勝利！' : '敗北…');
+    document.getElementById('result-detail').textContent =
+      `あなた: ${myTier} ／ 相手: ${oppTier}`;
+    document.getElementById('result-overlay').classList.remove('hidden');
+    document.getElementById('btn-rematch').disabled = false;
+    app.rematchSent = false;
+    document.getElementById('rematch-status').classList.add('hidden');
+  }, 800);
+}
 
-  const rewards = msg.rewards?.[app.role] ?? { gold: 0, fame: 0 };
-  document.getElementById('reward-box').innerHTML =
-    `<span>💰 ${rewards.gold}</span><span>⚔ ${rewards.fame} 名声</span>`;
-  document.getElementById('result-scores').textContent =
-    `スコア ${app.scores.host} — ${app.scores.guest}`;
-
-  document.getElementById('rematch-status').classList.add('hidden');
-  document.getElementById('btn-rematch').disabled = false;
-  showScreen('result');
-
-  if (!msg.gameOver) {
-    setTimeout(() => {
-      if (app.phase === PHASE.RESULT) showScreen('equipment');
-    }, JOUST_CONSTANTS.RESULT_MS);
-  }
+function onPhaseFinished() {
+  app.phase = PHASE.FINISHED;
 }
 
 function onRematchState(msg) {
@@ -351,17 +297,26 @@ function onRematchState(msg) {
   const el = document.getElementById('rematch-status');
   el.classList.remove('hidden');
   if (mine && opp) el.textContent = '再戦開始…';
-  else if (mine) el.textContent = '相手の再戦を待っています…';
-  else el.textContent = '再戦ボタンを押してください';
+  else if (mine) el.textContent = '相手を待っています…';
+  else el.textContent = '';
 }
 
-// ── Game loop (deterministic positions) ───────────────
+function showVerdict(myTier, oppTier) {
+  const el = document.getElementById('verdict-display');
+  const text = document.getElementById('verdict-text');
+  text.textContent = myTier;
+  text.className = `tier-${myTier}`;
+  el.classList.remove('hidden');
+  setTimeout(() => el.classList.add('hidden'), 2000);
+}
+
+// ── Game loop ─────────────────────────────────────────
 function startGameLoop() {
   if (rafId) return;
   const tick = () => {
     rafId = requestAnimationFrame(tick);
-    updateGameFrame();
-    drawGameFrame();
+    updateFrame();
+    drawFrame();
   };
   rafId = requestAnimationFrame(tick);
 }
@@ -371,151 +326,79 @@ function stopGameLoop() {
   rafId = null;
 }
 
-function updateGameFrame() {
+function updateFrame() {
   if (app.phase === PHASE.COUNTDOWN) {
     const left = Math.max(0, app.countdownEndsAt - Date.now());
     const num = Math.ceil(left / 1000);
-    if (num > 0) showCountdown(num);
-    else hideCountdown();
+    document.getElementById('countdown-num').textContent = num > 0 ? String(num) : 'GO!';
+    if (num <= 0) {
+      document.getElementById('countdown-num').classList.add('go');
+    }
   }
 
   if (app.phase === PHASE.CHARGE) {
-    updateJoystickLance();
     const now = Date.now();
     if (now - app.lastLanceSend >= LANCE_SEND_INTERVAL) {
       app.lastLanceSend = now;
       send('update_lance', { lanceHeight: app.lanceHeight });
     }
-    updateLanceBar();
+    updateGauge();
   }
 
-  if (app.impactFlash > 0) app.impactFlash *= 0.88;
+  if (app.impactFlash > 0) app.impactFlash *= 0.85;
 }
 
-function drawGameFrame() {
+function drawFrame() {
   if (!renderer) return;
-  let hostX = 0.12;
-  let guestX = 0.88;
-  let hostLH = 0.5;
-  let guestLH = 0.5;
-  let countdownNum = null;
+  let myX = 0.12;
+  let oppX = 0.88;
 
-  if (app.phase === PHASE.CHARGE && app.matchStartTime) {
+  if ((app.phase === PHASE.CHARGE || app.phase === PHASE.RESULT) && app.matchStartTime) {
     const progress = Sim.getChargeProgress(Date.now(), app.matchStartTime);
-    hostX = Sim.getHorseScreenX(true, progress);
-    guestX = Sim.getHorseScreenX(false, progress);
-    hostLH = app.role === 'host' ? app.lanceHeight : app.oppLanceHeight;
-    guestLH = app.role === 'guest' ? app.lanceHeight : app.oppLanceHeight;
-  } else if (app.phase === PHASE.COUNTDOWN) {
-    const left = Math.max(0, app.countdownEndsAt - Date.now());
-    countdownNum = Math.ceil(left / 1000) || null;
+    myX = Sim.getMyScreenX(Math.min(progress, 1));
+    oppX = Sim.getOppScreenX(Math.min(progress, 1));
   }
 
-  const hostName = app.role === 'host' ? app.playerName : app.opponentName;
-  const guestName = app.role === 'guest' ? app.playerName : app.opponentName;
-
   renderer.render({
-    hostX,
-    guestX,
-    hostLanceH: hostLH,
-    guestLanceH: guestLH,
-    hostName: hostName || 'A',
-    guestName: guestName || 'B',
-    countdownNum,
+    myX,
+    oppX,
+    myLanceH: app.lanceHeight,
+    oppLanceH: app.oppLanceHeight,
     impactFlash: app.impactFlash,
   });
 }
 
-// ── UI helpers ────────────────────────────────────────
-function showBanner(text) {
-  const el = document.getElementById('phase-banner');
-  el.textContent = text;
-  el.classList.remove('hidden');
-  setTimeout(() => el.classList.add('hidden'), 2000);
+function updateGauge() {
+  const marker = document.getElementById('gauge-marker');
+  marker.style.top = `${(1 - app.lanceHeight) * 100}%`;
 }
 
-function showCountdown(n) {
-  const ov = document.getElementById('countdown-overlay');
-  document.getElementById('countdown-num').textContent = String(n);
-  ov.classList.remove('hidden');
-}
+// ── Drag control (full screen) ────────────────────────
+function setupDrag() {
+  const sens = 0.004;
 
-function hideCountdown() {
-  document.getElementById('countdown-overlay').classList.add('hidden');
-}
-
-function showToast(text) {
-  const el = document.getElementById('result-toast');
-  el.textContent = text;
-  el.classList.remove('hidden');
-  setTimeout(() => el.classList.add('hidden'), 2500);
-}
-
-function updateLanceBar() {
-  const fill = document.getElementById('lance-height-fill');
-  fill.style.height = `${(1 - app.lanceHeight) * 100}%`;
-}
-
-// ── Joystick (lance height only) ──────────────────────
-function updateJoystickLance() {
-  if (!joystick.active) return;
-  const sens = 0.012;
-  joystick.smoothY = clamp(joystick.smoothY - joystick.ny * sens, 0.05, 0.95);
-  app.lanceHeight = joystick.smoothY;
-}
-
-function setupJoystick() {
-  const zone = document.getElementById('joystick-zone');
-  const base = document.getElementById('joystick-base');
-  const knob = document.getElementById('joystick-knob');
-  const maxR = 36;
-
-  function moveKnob(nx, ny) {
-    knob.style.transform = `translate(calc(-50% + ${nx * maxR}px), calc(-50% + ${ny * maxR}px))`;
-  }
-
-  zone.addEventListener('pointerdown', (e) => {
+  gameScreen.addEventListener('pointerdown', (e) => {
     if (app.phase !== PHASE.CHARGE) return;
-    joystick.active = true;
-    joystick.id = e.pointerId;
-    zone.setPointerCapture(e.pointerId);
+    if (e.target.closest('button')) return;
+    app.drag.active = true;
+    app.drag.id = e.pointerId;
+    app.drag.lastY = e.clientY;
+    gameScreen.setPointerCapture(e.pointerId);
   });
 
-  zone.addEventListener('pointermove', (e) => {
-    if (!joystick.active || e.pointerId !== joystick.id) return;
-    const rect = base.getBoundingClientRect();
-    const cx = rect.left + rect.width / 2;
-    const cy = rect.top + rect.height / 2;
-    let nx = (e.clientX - cx) / maxR;
-    let ny = (e.clientY - cy) / maxR;
-    const len = Math.hypot(nx, ny);
-    if (len > 1) { nx /= len; ny /= len; }
-    joystick.nx = nx;
-    joystick.ny = ny;
-    moveKnob(nx, ny);
+  gameScreen.addEventListener('pointermove', (e) => {
+    if (!app.drag.active || e.pointerId !== app.drag.id) return;
+    const dy = e.clientY - app.drag.lastY;
+    app.drag.lastY = e.clientY;
+    app.lanceHeight = clamp(app.lanceHeight - dy * sens, 0.05, 0.95);
   });
 
-  function endJoy(e) {
-    if (e.pointerId !== joystick.id) return;
-    joystick.active = false;
-    joystick.nx = 0;
-    joystick.ny = 0;
-    moveKnob(0, 0);
+  function endDrag(e) {
+    if (e.pointerId !== app.drag.id) return;
+    app.drag.active = false;
   }
-  zone.addEventListener('pointerup', endJoy);
-  zone.addEventListener('pointercancel', endJoy);
-}
-
-function setupThrust() {
-  document.getElementById('btn-thrust').addEventListener('pointerdown', (e) => {
-    e.preventDefault();
-    if (app.phase !== PHASE.CHARGE || app.lanceActionTiming != null) return;
-    if (!app.matchStartTime) return;
-    const timing = Sim.getChargeProgress(Date.now(), app.matchStartTime);
-    app.lanceActionTiming = timing;
-    send('set_lance_timing', { lanceActionTiming: timing });
-    showToast(`突き！ タイミング ${Math.round(timing * 100)}%`);
-  });
+  gameScreen.addEventListener('pointerup', endDrag);
+  gameScreen.addEventListener('pointercancel', endDrag);
 }
 
 function clamp(v, min, max) {
@@ -540,20 +423,15 @@ document.getElementById('btn-join-back').addEventListener('click', () => {
 
 document.getElementById('btn-join').addEventListener('click', () => {
   const code = document.getElementById('room-code-input').value.trim();
-  if (!code) return showError('ルームコードを入力してください');
+  if (!code) return showError('ルームコードを入力');
   app.playerName = document.getElementById('player-name').value.trim() || '騎士B';
   send('join_room', { code, name: app.playerName });
 });
 
-document.getElementById('btn-leave').addEventListener('click', () => {
-  send('leave_room');
-  resetToLobby();
-});
-
 document.getElementById('btn-ready').addEventListener('click', () => {
-  if (app.phase !== PHASE.EQUIPMENT) return;
+  if (app.phase !== PHASE.WAITING && app.phase !== PHASE.FINISHED) return;
   app.myReady = !app.myReady;
-  updateEquipReadyUI();
+  updateReadyUI();
   send('set_ready', { ready: app.myReady });
 });
 
@@ -561,11 +439,17 @@ document.getElementById('btn-rematch').addEventListener('click', () => {
   if (app.rematchSent) return;
   app.rematchSent = true;
   document.getElementById('btn-rematch').disabled = true;
+  document.getElementById('result-overlay').classList.add('hidden');
   send('rematch_request', { accept: true });
   onRematchState({
     hostRematch: app.role === 'host',
     guestRematch: app.role === 'guest',
   });
+});
+
+document.getElementById('btn-leave').addEventListener('click', () => {
+  send('leave_room');
+  resetToLobby();
 });
 
 document.getElementById('btn-back-lobby').addEventListener('click', () => {
@@ -575,8 +459,7 @@ document.getElementById('btn-back-lobby').addEventListener('click', () => {
 
 function checkOrientation() {
   const hint = document.getElementById('rotate-hint');
-  const landscape = window.innerWidth > window.innerHeight;
-  hint.classList.toggle('hidden', landscape);
+  hint.classList.toggle('hidden', window.innerWidth > window.innerHeight);
 }
 
 window.addEventListener('resize', () => {
@@ -585,7 +468,6 @@ window.addEventListener('resize', () => {
 });
 window.addEventListener('orientationchange', checkOrientation);
 
-setupJoystick();
-setupThrust();
+setupDrag();
 checkOrientation();
 connect();

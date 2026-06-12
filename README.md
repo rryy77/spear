@@ -1,78 +1,28 @@
-# Joust Royale — オンライン1vs1 馬上槍
+# 馬上槍試合 — オンライン1vs1
 
-スマホ横画面向け 2.5D Web ゲーム。ルームコードで友達と対戦できます。
+スマホ横画面向けのシンプルな馬上槍試合ゲームです。
 
-詳細設計は [DESIGN.md](./DESIGN.md) を参照。
+## 遊び方
 
-## マルチプレイの流れ
+1. ルームを作成するか、コードで参加
+2. 競技場画面で **READY**
+3. カウントダウン後、自動で突撃
+4. **画面を上下にドラッグ**して槍の高さを調整
+5. 右のゲージで **PERFECT** ゾーンを狙う
+6. 勝敗表示 → **再戦**
 
-1. **ルーム作成** — 片方がルームを作成（コード発行）
-2. **ルーム参加** — もう一方がコードで参加
-3. **装備選択** — 馬・槍・鎧・盾を選び **READY**
-4. **カウントダウン** — 3, 2, 1 の後、同期された `matchStartTime` で突撃開始
-5. **操作** — 左スティックで槍の高さ、「突く」でタイミング入力
-6. **結果** — スコア・報酬表示、再戦または次ラウンド
+1試合は約12秒（カウントダウン3秒 + 突撃5秒 + 結果表示）。
 
-## 同期方針
-
-座標は毎フレーム送りません。馬の位置は `matchStartTime` から両クライアントが同じ式で再現します。  
-サーバーと同期するのは `ready` / `selectedEquipment` / `matchStartTime` / `lanceHeight` / `lanceActionTiming` / `impactResult` / `rematchRequest` のみです。
-
-## 起動方法（ローカル）
+## 起動（ローカル）
 
 ```bash
 npm install
 npm start
 ```
 
-ブラウザで `http://localhost:3000` を開きます。
+## デプロイ
 
-**2人で遊ぶ場合:** 別々の端末（スマホ2台など）から同じサーバーURLにアクセスしてください。同一Wi-Fi内なら `http://<PCのIP>:3000` を使えます。
+- **フロント**: Vercel
+- **WebSocket**: Render（`server.js`）
 
-## Vercel へのデプロイ（重要）
-
-Vercel は **WebSocket の常時接続に対応していません**。  
-`wss://...vercel.app` へ接続すると HTTP 200 が返り、次のエラーになります:
-
-```
-WebSocket handshake: Unexpected response code: 200
-```
-
-そのため **フロント（Vercel）とゲームサーバー（Render 等）を分けて** デプロイします。
-
-### 手順
-
-1. **ゲームサーバーを Render にデプロイ**
-   - [Render](https://render.com) で New → Blueprint または Web Service
-   - リポジトリ `spear` を接続
-   - `render.yaml` が自動適用されます（または Start Command: `npm start`）
-   - デプロイ後の URL を控える（例: `https://spear-api.onrender.com`）
-
-2. **Vercel にフロントをデプロイ**
-   - Application Preset: **Other**
-   - Build Command: 空欄
-   - Output Directory: 空欄
-
-3. **Vercel の環境変数を設定**
-   - Settings → Environment Variables
-   - `WS_URL` = `wss://spear-api.onrender.com`（Render の URL。`https` を `wss` に変える）
-   - 再デプロイする
-
-4. ブラウザで `https://spear-beta.vercel.app` を開き、「接続済み」と表示されれば成功
-
-### 構成イメージ
-
-```
-スマホ/PC  →  Vercel（HTML/CSS/JS）
-                ↓ WS_URL
-             Render（server.js + WebSocket）
-```
-
-## ファイル構成
-
-| ファイル | 内容 |
-|---------|------|
-| `server.js` | WebSocketサーバー・ルーム管理・戦闘判定 |
-| `client.js` | ロビーUI・FPS描画・入力 |
-| `index.html` | 画面構成 |
-| `style.css` | スタイル |
+Vercel の環境変数 `WS_URL` に Render の `wss://` URL を設定してください。

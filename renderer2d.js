@@ -1,5 +1,5 @@
 /**
- * Joust Royale — 2.5D 横画面レンダラー（Canvas）
+ * 馬上槍試合 — 2D横画面レンダラー
  */
 function createRenderer2D(canvas) {
   const ctx = canvas.getContext('2d');
@@ -22,98 +22,137 @@ function createRenderer2D(canvas) {
   }
 
   function drawSky() {
-    const g = ctx.createLinearGradient(0, 0, 0, h);
-    g.addColorStop(0, '#1a2744');
-    g.addColorStop(0.5, '#3d2f4a');
-    g.addColorStop(1, '#5c4033');
+    const g = ctx.createLinearGradient(0, 0, 0, h * 0.6);
+    g.addColorStop(0, '#6b8cae');
+    g.addColorStop(1, '#c4a574');
     ctx.fillStyle = g;
-    ctx.fillRect(0, 0, w, h);
+    ctx.fillRect(0, 0, w, h * 0.65);
   }
 
-  function drawArena() {
-    const groundY = h * 0.72;
-    ctx.fillStyle = '#3d2817';
-    ctx.fillRect(0, groundY, w, h - groundY);
-    ctx.fillStyle = '#4a3520';
-    for (let i = 0; i < 12; i++) {
-      const x = (i / 12) * w;
-      ctx.fillRect(x, groundY, w / 24, 4);
-    }
-    ctx.strokeStyle = '#8b7355';
-    ctx.lineWidth = 3;
+  function drawColosseum() {
+    const groundY = h * 0.68;
+    const cx = w * 0.5;
+
+    ctx.fillStyle = '#8b7355';
     ctx.beginPath();
-    ctx.moveTo(w * 0.5, groundY - h * 0.35);
-    ctx.lineTo(w * 0.5, groundY);
-    ctx.stroke();
-    ctx.fillStyle = 'rgba(200,180,140,0.15)';
-    ctx.fillRect(w * 0.48, groundY - h * 0.35, w * 0.04, h * 0.35);
-  }
-
-  function drawKnight(xNorm, lanceH, facing, color, label) {
-    const groundY = h * 0.72;
-    const x = xNorm * w;
-    const scale = h * 0.0012;
-    const horseW = 80 * scale;
-    const horseH = 45 * scale;
-
-    ctx.save();
-    ctx.translate(x, groundY - horseH * 0.3);
-    if (facing < 0) ctx.scale(-1, 1);
-
-    ctx.fillStyle = '#2a1810';
-    ctx.fillRect(-horseW * 0.5, -horseH * 0.2, horseW, horseH * 0.5);
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.ellipse(0, -horseH * 0.5, horseW * 0.35, horseH * 0.35, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx, groundY + h * 0.08, w * 0.55, h * 0.12, 0, Math.PI, 0);
     ctx.fill();
 
-    const lanceAngle = -0.4 + lanceH * 0.8;
-    const lanceLen = horseW * 1.4;
-    ctx.strokeStyle = '#c9a227';
-    ctx.lineWidth = 4 * scale;
-    ctx.beginPath();
-    ctx.moveTo(horseW * 0.2, -horseH * 0.7);
-    ctx.lineTo(
-      horseW * 0.2 + Math.cos(lanceAngle) * lanceLen,
-      -horseH * 0.7 + Math.sin(lanceAngle) * lanceLen
-    );
-    ctx.stroke();
+    ctx.strokeStyle = '#6b5344';
+    ctx.lineWidth = 3;
+    for (let i = 0; i < 14; i++) {
+      const angle = Math.PI + (i / 13) * Math.PI;
+      const x1 = cx + Math.cos(angle) * w * 0.48;
+      const y1 = groundY + Math.sin(angle) * h * 0.1;
+      const x2 = cx + Math.cos(angle) * w * 0.42;
+      const y2 = groundY - h * 0.02;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+    }
 
-    ctx.fillStyle = '#fff';
-    ctx.font = `${12 * scale}px sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.fillText(label, 0, -horseH * 1.1);
-    ctx.restore();
+    ctx.fillStyle = '#c9a86c';
+    for (let i = 0; i < 20; i++) {
+      const t = i / 19;
+      const x = w * 0.08 + t * w * 0.84;
+      ctx.fillRect(x, groundY - h * 0.22, 6, h * 0.22);
+    }
+
+    ctx.fillStyle = '#5c4033';
+    ctx.fillRect(0, groundY, w, h - groundY);
+    ctx.fillStyle = '#4a3520';
+    for (let i = 0; i < 16; i++) {
+      ctx.fillRect((i / 16) * w, groundY, w / 32, 3);
+    }
   }
 
-  function drawCountdown(num) {
-    if (!num) return;
-    ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.fillRect(0, 0, w, h);
-    ctx.fillStyle = '#ffd700';
-    ctx.font = `bold ${h * 0.25}px serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(String(num), w / 2, h / 2);
+  function drawWoodenFence() {
+    const groundY = h * 0.68;
+    const fenceW = w * 0.035;
+    const fenceH = h * 0.32;
+    const x = w * 0.5 - fenceW / 2;
+
+    ctx.fillStyle = '#6b4423';
+    ctx.fillRect(x, groundY - fenceH, fenceW, fenceH);
+
+    ctx.strokeStyle = '#4a2f15';
+    ctx.lineWidth = 2;
+    const planks = 8;
+    for (let i = 0; i <= planks; i++) {
+      const y = groundY - fenceH + (i / planks) * fenceH;
+      ctx.beginPath();
+      ctx.moveTo(x - 4, y);
+      ctx.lineTo(x + fenceW + 4, y);
+      ctx.stroke();
+    }
+
+    ctx.fillStyle = '#5a3818';
+    ctx.fillRect(x - 6, groundY - fenceH - 8, fenceW + 12, 10);
+    ctx.fillRect(x - 6, groundY - 10, fenceW + 12, 10);
+  }
+
+  function drawKnight(xNorm, lanceH, facingRight, isMe) {
+    const groundY = h * 0.68;
+    const x = xNorm * w;
+    const sc = h * 0.0011;
+    const horseW = 90 * sc;
+    const horseH = 50 * sc;
+
+    ctx.save();
+    ctx.translate(x, groundY - horseH * 0.25);
+    if (!facingRight) ctx.scale(-1, 1);
+
+    ctx.fillStyle = '#3d2817';
+    ctx.fillRect(-horseW * 0.45, 0, horseW * 0.9, horseH * 0.35);
+
+    ctx.fillStyle = isMe ? '#2d4a6e' : '#6e2d2d';
+    ctx.beginPath();
+    ctx.ellipse(0, -horseH * 0.35, horseW * 0.32, horseH * 0.32, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#888';
+    ctx.beginPath();
+    ctx.arc(horseW * 0.05, -horseH * 0.75, horseH * 0.22, 0, Math.PI * 2);
+    ctx.fill();
+
+    const lanceAngle = -0.35 + lanceH * 0.75;
+    const lanceLen = horseW * 1.5;
+    const lx = horseW * 0.15;
+    const ly = -horseH * 0.65;
+    ctx.strokeStyle = '#8b6914';
+    ctx.lineWidth = 5 * sc;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(lx, ly);
+    ctx.lineTo(lx + Math.cos(lanceAngle) * lanceLen, ly + Math.sin(lanceAngle) * lanceLen);
+    ctx.stroke();
+
+    ctx.fillStyle = '#aaa';
+    ctx.beginPath();
+    ctx.moveTo(lx + Math.cos(lanceAngle) * lanceLen, ly + Math.sin(lanceAngle) * lanceLen);
+    ctx.lineTo(lx + Math.cos(lanceAngle) * lanceLen + 8 * sc, ly + Math.sin(lanceAngle) * lanceLen - 4 * sc);
+    ctx.lineTo(lx + Math.cos(lanceAngle) * lanceLen + 8 * sc, ly + Math.sin(lanceAngle) * lanceLen + 4 * sc);
+    ctx.fill();
+
+    ctx.restore();
   }
 
   function drawImpactFlash(intensity) {
     if (!intensity) return;
-    ctx.fillStyle = `rgba(255,200,100,${intensity * 0.6})`;
+    ctx.fillStyle = `rgba(255,220,120,${intensity * 0.55})`;
     ctx.fillRect(0, 0, w, h);
   }
 
   function render(state) {
     if (w < 1 || h < 1) return;
     drawSky();
-    drawArena();
+    drawColosseum();
+    drawWoodenFence();
 
-    const hostX = state.hostX ?? 0.12;
-    const guestX = state.guestX ?? 0.88;
-    drawKnight(hostX, state.hostLanceH ?? 0.5, 1, '#4a6fa5', state.hostName || 'A');
-    drawKnight(guestX, state.guestLanceH ?? 0.5, -1, '#a54a4a', state.guestName || 'B');
+    drawKnight(state.myX ?? 0.12, state.myLanceH ?? 0.5, true, true);
+    drawKnight(state.oppX ?? 0.88, state.oppLanceH ?? 0.5, false, false);
 
-    drawCountdown(state.countdownNum);
     drawImpactFlash(state.impactFlash);
   }
 
