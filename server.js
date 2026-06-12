@@ -4,12 +4,12 @@ const { WebSocketServer } = require('ws');
 const path = require('path');
 const crypto = require('crypto');
 
+const JOUST_CONSTANTS = require('./shared/constants');
+const { DEFAULT_EQUIPMENT } = require('./shared/equipment');
+const { resolveImpact, calcRewards } = require('./shared/sim');
+
 const PORT = process.env.PORT || 3000;
-const INTRO_MS = 2000;
-const AIM_DURATION_MS = 8000;
-const COUNTDOWN_MS = 3000;
-const CHARGE_DURATION_MS = 3000;
-const RESULT_PAUSE_MS = 4500;
+const { COUNTDOWN_MS, CHARGE_MS, RESULT_MS } = JOUST_CONSTANTS;
 
 const app = express();
 const server = http.createServer(app);
@@ -39,19 +39,16 @@ function generateRoomCode() {
   return code;
 }
 
-function defaultArmor() {
-  return { head: 100, torso: 100, legs: 100 };
-}
-
 function createPlayer(ws, name) {
   return {
     ws,
     name,
-    x: 0.5,
-    height: 0.5,
-    armor: defaultArmor(),
-    stab: false,
-    dodge: false,
+    ready: false,
+    rematchRequest: false,
+    equipment: { ...DEFAULT_EQUIPMENT },
+    lanceHeight: 0.5,
+    lanceActionTiming: null,
+    score: 0,
   };
 }
 
@@ -68,142 +65,115 @@ function broadcastRoom(room, type, payload = {}, excludeWs = null) {
 }
 
 function clearRoomTimers(room) {
-  for (const key of ['introTimer', 'aimTimer', 'countdownTimer', 'chargeTimer', 'resultTimer']) {
+  for (const key of ['countdownTimer', 'chargeTimer', 'resultTimer']) {
     if (room[key]) clearTimeout(room[key]);
     room[key] = null;
   }
 }
 
-function heightToZone(h) {
-  if (h < 0.34) return 'head';
-  if (h < 0.67) return 'torso';
-  return 'legs';
+function equipmentSnapshot(room) {
+  return {
+    host: room.host ? { name: room.host.name, equipment: room.host.equipment, ready: room.host.ready } : null,
+    guest: room.guest ? { name: room.guest.name, equipment: room.guest.equipment, ready: room.guest.ready } : null,
+    scores: { host: room.host?.score ?? 0, guest: room.guest?.score ?? 0 },
+    round: room.round,
+  };
 }
 
-function calcHitQuality(attacker, defender) {
-  let gap = Math.abs(attacker.x - defender.x);
-  if (attacker.stab) gap *= 0.82;
-  if (defender.dodge) gap += 0.14;
-  if (gap < 0.09) return 100;
-  if (gap < 0.2) return 50;
-  if (gap < 0.32) return 33;
-  return 0;
-}
-
-function resolveAttack(attacker, defender) {
-  const damage = calcHitQuality(attacker, defender);
-  const zone = heightToZone(attacker.height);
-  if (damage > 0) {
-    defender.armor[zone] = Math.max(0, defender.armor[zone] - damage);
+function enterEquipmentPhase(room) {
+  room.phase = 'equipment';
+  room.host.ready = false;
+  room.host.rematchRequest = false;
+  room.host.lanceHeight = 0.5;
+  room.host.lanceActionTiming = null;
+  if (room.guest) {
+    room.guest.ready = false;
+    room.guest.rematchRequest = false;
+    room.guest.lanceHeight = 0.5;
+    room.guest.lanceActionTiming = null;
   }
-  return { damage, zone, armor: { ...defender.armor } };
+  broadcastRoom(room, 'phase_equipment', equipmentSnapshot(room));
 }
 
-function isDefeated(player) {
-  return player.armor.head <= 0 && player.armor.torso <= 0 && player.armor.legs <= 0;
+function bothReady(room) {
+  return room.host?.ready && room.guest?.ready;
 }
 
-function startIntroThenRound(room) {
-  room.phase = 'intro';
-  const introEndsAt = Date.now() + INTRO_MS;
-  broadcastRoom(room, 'game_intro', {
-    round: room.round,
-    endsAt: introEndsAt,
-    hostName: room.host.name,
-    guestName: room.guest.name,
-    message: 'リストの両端から向かい合い、一斉に突撃します',
-  });
-  room.introTimer = setTimeout(() => startAimPhase(room), INTRO_MS);
-}
-
-function startAimPhase(room) {
-  if (!room.host || !room.guest) return;
-  room.phase = 'aim';
-  room.aimEndsAt = Date.now() + AIM_DURATION_MS;
-  room.host.x = 0.5;
-  room.host.height = 0.5;
-  room.guest.x = 0.5;
-  room.guest.height = 0.5;
-
-  broadcastRoom(room, 'round_start', {
-    round: room.round,
-    aimEndsAt: room.aimEndsAt,
-    aimDuration: AIM_DURATION_MS,
-    armor: {
-      host: room.host.armor,
-      guest: room.guest.armor,
-    },
-  });
-
-  room.aimTimer = setTimeout(() => startCountdown(room), AIM_DURATION_MS);
-}
-
-function startCountdown(room) {
-  if (!room.host || !room.guest) return;
+function startMatchCountdown(room) {
+  if (!bothReady(room)) return;
   room.phase = 'countdown';
-  room.countdownEndsAt = Date.now() + COUNTDOWN_MS;
+  const endsAt = Date.now() + COUNTDOWN_MS;
+  room.countdownEndsAt = endsAt;
+  broadcastRoom(room, 'match_countdown', { endsAt, duration: COUNTDOWN_MS });
 
-  broadcastRoom(room, 'countdown_start', {
-    endsAt: room.countdownEndsAt,
-    duration: COUNTDOWN_MS,
-  });
-
-  room.countdownTimer = setTimeout(() => beginCharge(room), COUNTDOWN_MS);
+  room.countdownTimer = setTimeout(() => beginMatch(room), COUNTDOWN_MS);
 }
 
-function beginCharge(room) {
+function beginMatch(room) {
   if (!room.host || !room.guest) return;
   room.phase = 'charge';
-  room.chargeEndsAt = Date.now() + CHARGE_DURATION_MS;
+  room.matchStartTime = Date.now();
+  room.host.lanceHeight = 0.5;
+  room.guest.lanceHeight = 0.5;
+  room.host.lanceActionTiming = null;
+  room.guest.lanceActionTiming = null;
 
-  const hostHitsGuest = resolveAttack(room.host, room.guest);
-  const guestHitsHost = resolveAttack(room.guest, room.host);
-  room.host.stab = false;
-  room.guest.stab = false;
-  room.host.dodge = false;
-  room.guest.dodge = false;
-  room.pendingResult = { hostHitsGuest, guestHitsHost };
-
-  broadcastRoom(room, 'charge_start', {
-    endsAt: room.chargeEndsAt,
-    duration: CHARGE_DURATION_MS,
+  broadcastRoom(room, 'match_start', {
+    matchStartTime: room.matchStartTime,
+    chargeDuration: CHARGE_MS,
+    round: room.round,
+    equipment: {
+      host: room.host.equipment,
+      guest: room.guest.equipment,
+    },
   });
 
-  room.chargeTimer = setTimeout(() => finishRound(room), CHARGE_DURATION_MS);
+  room.chargeTimer = setTimeout(() => resolveMatch(room), CHARGE_MS);
 }
 
-function finishRound(room) {
-  if (!room.pendingResult) return;
+function resolveMatch(room) {
+  if (!room.host || !room.guest) return;
   room.phase = 'result';
-  const { hostHitsGuest, guestHitsHost } = room.pendingResult;
-  room.pendingResult = null;
 
-  const hostDefeated = isDefeated(room.host);
-  const guestDefeated = isDefeated(room.guest);
-  const gameOver = hostDefeated || guestDefeated;
-  let winner = null;
-  if (hostDefeated && !guestDefeated) winner = 'guest';
-  else if (guestDefeated && !hostDefeated) winner = 'host';
-  else if (hostDefeated && guestDefeated) winner = 'draw';
+  const impactResult = resolveImpact(room.host, room.guest);
+  let roundWinner = null;
+  const hostDmg = impactResult.hostHit.damage;
+  const guestDmg = impactResult.guestHit.damage;
+  if (hostDmg > guestDmg) {
+    roundWinner = 'host';
+    room.host.score += 1;
+  } else if (guestDmg > hostDmg) {
+    roundWinner = 'guest';
+    room.guest.score += 1;
+  }
 
-  broadcastRoom(room, 'round_result', {
+  const gameOver = room.host.score >= JOUST_CONSTANTS.ROUNDS_TO_WIN
+    || room.guest.score >= JOUST_CONSTANTS.ROUNDS_TO_WIN
+    || room.round >= 5;
+  let matchWinner = null;
+  if (room.host.score >= JOUST_CONSTANTS.ROUNDS_TO_WIN) matchWinner = 'host';
+  else if (room.guest.score >= JOUST_CONSTANTS.ROUNDS_TO_WIN) matchWinner = 'guest';
+
+  const rewards = {
+    host: calcRewards(matchWinner === 'host', room.round),
+    guest: calcRewards(matchWinner === 'guest', room.round),
+  };
+
+  broadcastRoom(room, 'impact_result', {
+    impactResult,
+    roundWinner,
+    scores: { host: room.host.score, guest: room.guest.score },
     round: room.round,
-    hostAttack: {
-      damage: hostHitsGuest.damage,
-      zone: hostHitsGuest.zone,
-      targetArmor: hostHitsGuest.armor,
-    },
-    guestAttack: {
-      damage: guestHitsHost.damage,
-      zone: guestHitsHost.zone,
-      targetArmor: guestHitsHost.armor,
-    },
-    armor: {
-      host: room.host.armor,
-      guest: room.guest.armor,
-    },
+  });
+
+  broadcastRoom(room, 'match_result', {
+    roundWinner,
+    matchWinner,
     gameOver,
-    winner,
+    scores: { host: room.host.score, guest: room.guest.score },
+    rewards,
+    impactResult,
+    round: room.round,
   });
 
   if (gameOver) {
@@ -212,7 +182,16 @@ function finishRound(room) {
   }
 
   room.round += 1;
-  room.resultTimer = setTimeout(() => startAimPhase(room), RESULT_PAUSE_MS);
+  room.host.rematchRequest = false;
+  room.guest.rematchRequest = false;
+  room.resultTimer = setTimeout(() => enterEquipmentPhase(room), RESULT_MS);
+}
+
+function startRematch(room) {
+  room.host.score = 0;
+  room.guest.score = 0;
+  room.round = 1;
+  enterEquipmentPhase(room);
 }
 
 function findRoomByWs(ws) {
@@ -227,9 +206,8 @@ function removePlayer(ws) {
   if (!room) return;
 
   const wasHost = room.host?.ws === ws;
-  const wasGuest = room.guest?.ws === ws;
   if (wasHost) room.host = null;
-  if (wasGuest) room.guest = null;
+  else if (room.guest?.ws === ws) room.guest = null;
 
   clearRoomTimers(room);
   broadcastRoom(room, 'player_left', {
@@ -262,8 +240,7 @@ wss.on('connection', (ws) => {
           guest: null,
           phase: 'lobby',
           round: 1,
-          introTimer: null,
-          aimTimer: null,
+          matchStartTime: null,
           countdownTimer: null,
           chargeTimer: null,
           resultTimer: null,
@@ -290,57 +267,92 @@ wss.on('connection', (ws) => {
         role = 'guest';
         roomCode = code;
         send(ws, 'room_joined', { code, role: 'guest' });
-        send(ws, 'lobby_update', { role: 'guest', canStart: false });
         send(room.host.ws, 'player_joined', { guestName: room.guest.name });
-        send(room.host.ws, 'lobby_update', { role: 'host', canStart: true });
+        enterEquipmentPhase(room);
         break;
       }
 
-      case 'start_game': {
+      case 'set_equipment': {
         const room = rooms.get(roomCode);
-        if (!room || role !== 'host') return;
-        if (!room.guest) {
-          send(ws, 'error', { message: '対戦相手がまだ参加していません' });
-          return;
-        }
-        room.phase = 'playing';
-        room.round = 1;
-        clearRoomTimers(room);
-        broadcastRoom(room, 'game_start', {
-          hostName: room.host.name,
-          guestName: room.guest.name,
+        if (!room || room.phase !== 'equipment') return;
+        const player = role === 'host' ? room.host : room.guest;
+        if (!player) return;
+        const eq = msg.selectedEquipment || msg.equipment || {};
+        if (eq.horse) player.equipment.horse = eq.horse;
+        if (eq.lance) player.equipment.lance = eq.lance;
+        if (eq.armor) player.equipment.armor = eq.armor;
+        if (eq.shield) player.equipment.shield = eq.shield;
+        player.ready = false;
+        broadcastRoom(room, 'equipment_update', {
+          role,
+          selectedEquipment: player.equipment,
+          ready: false,
+          ...equipmentSnapshot(room),
         });
-        startIntroThenRound(room);
         break;
       }
 
-      case 'update_aim': {
+      case 'set_ready': {
         const room = rooms.get(roomCode);
-        if (!room || (room.phase !== 'aim' && room.phase !== 'charge')) return;
+        if (!room || room.phase !== 'equipment') return;
         const player = role === 'host' ? room.host : room.guest;
         if (!player) return;
-        player.x = clamp(msg.x ?? player.x, 0.1, 0.9);
-        player.height = clamp(msg.height ?? player.height, 0.05, 0.95);
+        player.ready = Boolean(msg.ready);
+        broadcastRoom(room, 'equipment_update', {
+          role,
+          selectedEquipment: player.equipment,
+          ready: player.ready,
+          ...equipmentSnapshot(room),
+        });
+        if (bothReady(room)) startMatchCountdown(room);
         break;
       }
 
-      case 'stab': {
+      case 'update_lance': {
         const room = rooms.get(roomCode);
-        if (!room || (room.phase !== 'aim' && room.phase !== 'charge')) return;
+        if (!room || room.phase !== 'charge') return;
         const player = role === 'host' ? room.host : room.guest;
         if (!player) return;
-        player.stab = true;
-        setTimeout(() => { player.stab = false; }, 400);
+        if (typeof msg.lanceHeight === 'number') {
+          player.lanceHeight = clamp(msg.lanceHeight, 0, 1);
+          broadcastRoom(room, 'lance_update', {
+            role,
+            lanceHeight: player.lanceHeight,
+          }, player.ws);
+        }
         break;
       }
 
-      case 'dodge': {
+      case 'set_lance_timing': {
         const room = rooms.get(roomCode);
-        if (!room || (room.phase !== 'aim' && room.phase !== 'charge')) return;
+        if (!room || room.phase !== 'charge') return;
+        const player = role === 'host' ? room.host : room.guest;
+        if (!player || player.lanceActionTiming != null) return;
+        if (typeof msg.lanceActionTiming === 'number') {
+          player.lanceActionTiming = clamp(msg.lanceActionTiming, 0, 1);
+        } else if (room.matchStartTime) {
+          player.lanceActionTiming = clamp(
+            (Date.now() - room.matchStartTime) / CHARGE_MS,
+            0,
+            1
+          );
+        }
+        break;
+      }
+
+      case 'rematch_request': {
+        const room = rooms.get(roomCode);
+        if (!room || room.phase !== 'finished') return;
         const player = role === 'host' ? room.host : room.guest;
         if (!player) return;
-        player.dodge = true;
-        setTimeout(() => { player.dodge = false; }, 600);
+        player.rematchRequest = Boolean(msg.accept);
+        broadcastRoom(room, 'rematch_state', {
+          hostRematch: room.host.rematchRequest,
+          guestRematch: room.guest.rematchRequest,
+        });
+        if (room.host.rematchRequest && room.guest.rematchRequest) {
+          startRematch(room);
+        }
         break;
       }
 
@@ -364,5 +376,5 @@ function clamp(v, min, max) {
 }
 
 server.listen(PORT, () => {
-  console.log(`ROCK YOU! server running at http://localhost:${PORT}`);
+  console.log(`Joust Royale server running at http://localhost:${PORT}`);
 });

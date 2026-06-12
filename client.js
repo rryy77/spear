@@ -1,53 +1,48 @@
-// ROCK YOU! — オンラインマルチプレイ 馬上槍試合
+// Joust Royale — オンライン1vs1
 
 const PHASE = {
-  LOBBY: 'lobby', INTRO: 'intro', AIM: 'aim',
-  COUNTDOWN: 'countdown', CHARGE: 'charge', RESULT: 'result', FINISHED: 'finished',
+  LOBBY: 'lobby',
+  EQUIPMENT: 'equipment',
+  COUNTDOWN: 'countdown',
+  CHARGE: 'charge',
+  RESULT: 'result',
+  FINISHED: 'finished',
 };
 
-const AIM_SENS_X = 0.010;
-const AIM_SENS_Y = 0.009;
-const AIM_SMOOTH = 0.12;
-const AIM_SEND_INTERVAL = 80;
-const AIM_DURATION = 8000;
+const { EQUIPMENT, DEFAULT_EQUIPMENT } = JoustEquipment;
+const Sim = JoustSim;
+
+const LANCE_SEND_INTERVAL = 120;
 
 const canvas = document.getElementById('game-canvas');
-const bloodOverlay = document.getElementById('blood-overlay');
-const phaseBanner = document.getElementById('phase-banner');
-const countdownOverlay = document.getElementById('countdown-overlay');
-const countdownNum = document.getElementById('countdown-num');
-const aimBarWrap = document.getElementById('aim-bar-wrap');
-const aimBar = document.getElementById('aim-bar');
-
-let fps = null;
+let renderer = null;
+let rafId = null;
 
 const app = {
   ws: null,
   role: null,
   roomCode: null,
+  playerName: '',
   opponentName: '',
   phase: PHASE.LOBBY,
   round: 1,
-  x: 0.5,
-  height: 0.5,
-  armor: { head: 100, torso: 100, legs: 100 },
-  oppArmor: { head: 100, torso: 100, legs: 100 },
-  chargeT: 0,
-  chargeStart: 0,
-  chargeDuration: 3000,
-  phaseEndsAt: 0,
-  lastAimSend: 0,
-  shake: 0,
-  stabT: 0,
-  dodgeT: 0,
+  scores: { host: 0, guest: 0 },
+  selectedEquipment: { ...DEFAULT_EQUIPMENT },
+  oppEquipment: { ...DEFAULT_EQUIPMENT },
+  myReady: false,
+  oppReady: false,
+  matchStartTime: 0,
+  chargeDuration: Sim.CHARGE_MS,
+  lanceHeight: 0.5,
+  oppLanceHeight: 0.5,
+  lanceActionTiming: null,
+  countdownEndsAt: 0,
+  lastLanceSend: 0,
+  impactFlash: 0,
+  rematchSent: false,
 };
 
-const joystick = {
-  active: false, id: null,
-  targetNx: 0, targetNy: 0,
-  smoothNx: 0, smoothNy: 0,
-};
-let tickInterval = null;
+const joystick = { active: false, id: null, smoothY: 0.5 };
 
 // ── WebSocket ───────────────────────────────────────────
 async function getWsUrl() {
@@ -98,35 +93,32 @@ function handleMessage(msg) {
       break;
     case 'player_joined':
       document.getElementById('waiting-message').textContent = `${msg.guestName} が参加！`;
-      document.getElementById('btn-start').classList.remove('hidden');
       break;
-    case 'lobby_update':
-      if (msg.canStart) {
-        document.getElementById('btn-start').classList.remove('hidden');
-        document.getElementById('waiting-message').textContent = '準備完了 — スタートを押してください';
+    case 'phase_equipment':
+      onPhaseEquipment(msg);
+      break;
+    case 'equipment_update':
+      onEquipmentUpdate(msg);
+      break;
+    case 'match_countdown':
+      onMatchCountdown(msg);
+      break;
+    case 'match_start':
+      onMatchStart(msg);
+      break;
+    case 'lance_update':
+      if (msg.role !== app.role && typeof msg.lanceHeight === 'number') {
+        app.oppLanceHeight = msg.lanceHeight;
       }
       break;
-    case 'game_start':
-      app.opponentName = app.role === 'host' ? msg.guestName : msg.hostName;
-      document.getElementById('opp-name').textContent = app.opponentName;
-      document.getElementById('hud-role').textContent = app.role === 'host' ? '騎士A' : '騎士B';
-      showScreen('game');
-      initRenderer();
+    case 'impact_result':
+      onImpactResult(msg);
       break;
-    case 'game_intro':
-      onGameIntro(msg);
+    case 'match_result':
+      onMatchResult(msg);
       break;
-    case 'round_start':
-      onRoundStart(msg);
-      break;
-    case 'countdown_start':
-      onCountdownStart(msg);
-      break;
-    case 'charge_start':
-      onChargeStart(msg);
-      break;
-    case 'round_result':
-      onRoundResult(msg);
+    case 'rematch_state':
+      onRematchState(msg);
       break;
     case 'player_left':
       showError(msg.message);
@@ -138,16 +130,21 @@ function handleMessage(msg) {
   }
 }
 
-// ── Lobby ───────────────────────────────────────────────
+// ── Lobby ─────────────────────────────────────────────
 function showScreen(name) {
-  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.screen').forEach((s) => s.classList.remove('active'));
   document.getElementById(`screen-${name}`).classList.add('active');
   if (name === 'game') {
     requestAnimationFrame(() => {
-      fps?.resize();
-      requestAnimationFrame(() => fps?.resize());
+      renderer?.resize();
+      requestAnimationFrame(() => renderer?.resize());
     });
   }
+}
+
+function setStatus(t) {
+  const el = document.getElementById('connection-status');
+  if (el) el.textContent = t;
 }
 
 function showError(msg) {
@@ -157,383 +154,438 @@ function showError(msg) {
   setTimeout(() => el.classList.add('hidden'), 4000);
 }
 
-function setStatus(msg) {
-  document.getElementById('connection-status').textContent = msg;
-}
-
 function showWaiting(code, isHost) {
   document.getElementById('lobby-menu').classList.add('hidden');
   document.getElementById('lobby-join').classList.add('hidden');
   document.getElementById('lobby-waiting').classList.remove('hidden');
   document.getElementById('display-code').textContent = code;
   document.getElementById('waiting-message').textContent = isHost
-    ? '騎士Bの参加を待っています…'
-    : '騎士Aのスタートを待っています…';
-  document.getElementById('btn-start').classList.toggle('hidden', !isHost);
+    ? '対戦相手の参加を待っています…'
+    : '装備選択へ移動します…';
 }
 
 function resetToLobby() {
+  stopGameLoop();
+  app.phase = PHASE.LOBBY;
   app.role = null;
   app.roomCode = null;
-  app.phase = PHASE.LOBBY;
-  stopTick();
+  app.rematchSent = false;
   document.getElementById('lobby-menu').classList.remove('hidden');
   document.getElementById('lobby-join').classList.add('hidden');
   document.getElementById('lobby-waiting').classList.add('hidden');
-  document.getElementById('btn-start').classList.add('hidden');
+  document.getElementById('btn-ready').textContent = 'READY';
+  document.getElementById('btn-ready').classList.remove('ready-on');
   showScreen('lobby');
 }
 
-function getPlayerName() {
-  return document.getElementById('player-name').value.trim() || '無名の騎士';
+// ── Equipment ─────────────────────────────────────────
+function buildEquipmentUI() {
+  const cats = ['horse', 'lance', 'armor', 'shield'];
+  const keys = { horse: 'horses', lance: 'lances', armor: 'armors', shield: 'shields' };
+  for (const cat of cats) {
+    const container = document.getElementById(`opts-${cat}`);
+    container.innerHTML = '';
+    const items = EQUIPMENT[keys[cat]];
+    for (const [id, item] of Object.entries(items)) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'equip-opt';
+      btn.dataset.cat = cat;
+      btn.dataset.id = id;
+      btn.textContent = item.name;
+      if (app.selectedEquipment[cat] === id) btn.classList.add('selected');
+      btn.addEventListener('click', () => selectEquipment(cat, id));
+      container.appendChild(btn);
+    }
+  }
 }
 
-document.getElementById('btn-create').addEventListener('click', () => send('create_room', { name: getPlayerName() }));
+function selectEquipment(cat, id) {
+  app.selectedEquipment[cat] = id;
+  app.myReady = false;
+  document.querySelectorAll(`.equip-opt[data-cat="${cat}"]`).forEach((b) => {
+    b.classList.toggle('selected', b.dataset.id === id);
+  });
+  document.getElementById('btn-ready').textContent = 'READY';
+  document.getElementById('btn-ready').classList.remove('ready-on');
+  send('set_equipment', { selectedEquipment: app.selectedEquipment });
+}
+
+function updateEquipReadyUI() {
+  const btn = document.getElementById('btn-ready');
+  btn.textContent = app.myReady ? 'READY ✓' : 'READY';
+  btn.classList.toggle('ready-on', app.myReady);
+  const opp = document.getElementById('opp-ready-status');
+  opp.textContent = app.oppReady ? '相手: READY' : '相手: 装備選択中…';
+}
+
+function onPhaseEquipment(msg) {
+  app.phase = PHASE.EQUIPMENT;
+  app.round = msg.round ?? 1;
+  app.scores = msg.scores ?? { host: 0, guest: 0 };
+  if (msg.host) {
+    if (app.role === 'host') {
+      app.selectedEquipment = { ...msg.host.equipment };
+      app.myReady = msg.host.ready;
+      app.playerName = msg.host.name;
+    } else {
+      app.oppEquipment = { ...msg.host.equipment };
+      app.oppReady = msg.host.ready;
+      app.opponentName = msg.host.name;
+    }
+  }
+  if (msg.guest) {
+    if (app.role === 'guest') {
+      app.selectedEquipment = { ...msg.guest.equipment };
+      app.myReady = msg.guest.ready;
+      app.playerName = msg.guest.name;
+    } else {
+      app.oppEquipment = { ...msg.guest.equipment };
+      app.oppReady = msg.guest.ready;
+      app.opponentName = msg.guest.name;
+    }
+  }
+  document.getElementById('equip-round').textContent = `ROUND ${app.round}`;
+  document.getElementById('equip-scores').textContent = `${app.scores.host} — ${app.scores.guest}`;
+  buildEquipmentUI();
+  updateEquipReadyUI();
+  showScreen('equipment');
+}
+
+function onEquipmentUpdate(msg) {
+  if (msg.scores) app.scores = msg.scores;
+  if (msg.round) app.round = msg.round;
+  document.getElementById('equip-scores').textContent = `${app.scores.host} — ${app.scores.guest}`;
+  const other = msg.role === 'host' ? 'guest' : 'host';
+  if (app.role === other) {
+    app.oppReady = msg.ready;
+    if (msg.selectedEquipment) app.oppEquipment = { ...msg.selectedEquipment };
+  } else {
+    app.myReady = msg.ready;
+    if (msg.selectedEquipment) app.selectedEquipment = { ...msg.selectedEquipment };
+    buildEquipmentUI();
+  }
+  updateEquipReadyUI();
+}
+
+// ── Match flow ────────────────────────────────────────
+function onMatchCountdown(msg) {
+  app.phase = PHASE.COUNTDOWN;
+  app.countdownEndsAt = msg.endsAt;
+  document.getElementById('my-name').textContent = app.playerName || (app.role === 'host' ? '騎士A' : '騎士B');
+  document.getElementById('opp-name').textContent = app.opponentName || '相手';
+  document.getElementById('hud-round').textContent = `ROUND ${app.round}`;
+  document.getElementById('hud-score').textContent = `${app.scores.host} — ${app.scores.guest}`;
+  document.getElementById('hud-role').textContent = app.role === 'host' ? '左陣' : '右陣';
+  showScreen('game');
+  if (!renderer) renderer = createRenderer2D(canvas);
+  renderer.resize();
+  startGameLoop();
+  showBanner('突撃準備 — 槍の高さを合わせろ');
+}
+
+function onMatchStart(msg) {
+  app.phase = PHASE.CHARGE;
+  app.matchStartTime = msg.matchStartTime;
+  app.chargeDuration = msg.chargeDuration ?? Sim.CHARGE_MS;
+  app.round = msg.round ?? app.round;
+  app.lanceHeight = 0.5;
+  app.oppLanceHeight = 0.5;
+  app.lanceActionTiming = null;
+  joystick.smoothY = 0.5;
+  hideCountdown();
+  showBanner('突撃！');
+}
+
+function onImpactResult(msg) {
+  app.impactFlash = 1;
+  const h = msg.impactResult?.hostHit;
+  const g = msg.impactResult?.guestHit;
+  const myHit = app.role === 'host' ? h : g;
+  const oppHit = app.role === 'host' ? g : h;
+  showToast(`命中 ${myHit?.damage ?? 0} / 被弾 ${oppHit?.damage ?? 0}`);
+  if (msg.scores) app.scores = msg.scores;
+}
+
+function onMatchResult(msg) {
+  app.phase = msg.gameOver ? PHASE.FINISHED : PHASE.RESULT;
+  if (msg.scores) app.scores = msg.scores;
+  app.rematchSent = false;
+
+  const won = msg.matchWinner === app.role;
+  const roundWon = msg.roundWinner === app.role;
+  let title = roundWon ? 'ラウンド勝利！' : (msg.roundWinner ? 'ラウンド敗北' : '引き分け');
+  if (msg.gameOver && msg.matchWinner) {
+    title = won ? '試合勝利！' : '試合敗北…';
+  } else if (msg.gameOver) {
+    title = '試合終了';
+  }
+
+  document.getElementById('result-title').textContent = title;
+  const h = msg.impactResult?.hostHit;
+  const g = msg.impactResult?.guestHit;
+  document.getElementById('result-message').textContent =
+    `与ダメージ ${app.role === 'host' ? h?.damage : g?.damage} / ` +
+    `被ダメージ ${app.role === 'host' ? g?.damage : h?.damage}`;
+
+  const rewards = msg.rewards?.[app.role] ?? { gold: 0, fame: 0 };
+  document.getElementById('reward-box').innerHTML =
+    `<span>💰 ${rewards.gold}</span><span>⚔ ${rewards.fame} 名声</span>`;
+  document.getElementById('result-scores').textContent =
+    `スコア ${app.scores.host} — ${app.scores.guest}`;
+
+  document.getElementById('rematch-status').classList.add('hidden');
+  document.getElementById('btn-rematch').disabled = false;
+  showScreen('result');
+
+  if (!msg.gameOver) {
+    setTimeout(() => {
+      if (app.phase === PHASE.RESULT) showScreen('equipment');
+    }, JOUST_CONSTANTS.RESULT_MS);
+  }
+}
+
+function onRematchState(msg) {
+  const mine = app.role === 'host' ? msg.hostRematch : msg.guestRematch;
+  const opp = app.role === 'host' ? msg.guestRematch : msg.hostRematch;
+  const el = document.getElementById('rematch-status');
+  el.classList.remove('hidden');
+  if (mine && opp) el.textContent = '再戦開始…';
+  else if (mine) el.textContent = '相手の再戦を待っています…';
+  else el.textContent = '再戦ボタンを押してください';
+}
+
+// ── Game loop (deterministic positions) ───────────────
+function startGameLoop() {
+  if (rafId) return;
+  const tick = () => {
+    rafId = requestAnimationFrame(tick);
+    updateGameFrame();
+    drawGameFrame();
+  };
+  rafId = requestAnimationFrame(tick);
+}
+
+function stopGameLoop() {
+  if (rafId) cancelAnimationFrame(rafId);
+  rafId = null;
+}
+
+function updateGameFrame() {
+  if (app.phase === PHASE.COUNTDOWN) {
+    const left = Math.max(0, app.countdownEndsAt - Date.now());
+    const num = Math.ceil(left / 1000);
+    if (num > 0) showCountdown(num);
+    else hideCountdown();
+  }
+
+  if (app.phase === PHASE.CHARGE) {
+    updateJoystickLance();
+    const now = Date.now();
+    if (now - app.lastLanceSend >= LANCE_SEND_INTERVAL) {
+      app.lastLanceSend = now;
+      send('update_lance', { lanceHeight: app.lanceHeight });
+    }
+    updateLanceBar();
+  }
+
+  if (app.impactFlash > 0) app.impactFlash *= 0.88;
+}
+
+function drawGameFrame() {
+  if (!renderer) return;
+  let hostX = 0.12;
+  let guestX = 0.88;
+  let hostLH = 0.5;
+  let guestLH = 0.5;
+  let countdownNum = null;
+
+  if (app.phase === PHASE.CHARGE && app.matchStartTime) {
+    const progress = Sim.getChargeProgress(Date.now(), app.matchStartTime);
+    hostX = Sim.getHorseScreenX(true, progress);
+    guestX = Sim.getHorseScreenX(false, progress);
+    hostLH = app.role === 'host' ? app.lanceHeight : app.oppLanceHeight;
+    guestLH = app.role === 'guest' ? app.lanceHeight : app.oppLanceHeight;
+  } else if (app.phase === PHASE.COUNTDOWN) {
+    const left = Math.max(0, app.countdownEndsAt - Date.now());
+    countdownNum = Math.ceil(left / 1000) || null;
+  }
+
+  const hostName = app.role === 'host' ? app.playerName : app.opponentName;
+  const guestName = app.role === 'guest' ? app.playerName : app.opponentName;
+
+  renderer.render({
+    hostX,
+    guestX,
+    hostLanceH: hostLH,
+    guestLanceH: guestLH,
+    hostName: hostName || 'A',
+    guestName: guestName || 'B',
+    countdownNum,
+    impactFlash: app.impactFlash,
+  });
+}
+
+// ── UI helpers ────────────────────────────────────────
+function showBanner(text) {
+  const el = document.getElementById('phase-banner');
+  el.textContent = text;
+  el.classList.remove('hidden');
+  setTimeout(() => el.classList.add('hidden'), 2000);
+}
+
+function showCountdown(n) {
+  const ov = document.getElementById('countdown-overlay');
+  document.getElementById('countdown-num').textContent = String(n);
+  ov.classList.remove('hidden');
+}
+
+function hideCountdown() {
+  document.getElementById('countdown-overlay').classList.add('hidden');
+}
+
+function showToast(text) {
+  const el = document.getElementById('result-toast');
+  el.textContent = text;
+  el.classList.remove('hidden');
+  setTimeout(() => el.classList.add('hidden'), 2500);
+}
+
+function updateLanceBar() {
+  const fill = document.getElementById('lance-height-fill');
+  fill.style.height = `${(1 - app.lanceHeight) * 100}%`;
+}
+
+// ── Joystick (lance height only) ──────────────────────
+function updateJoystickLance() {
+  if (!joystick.active) return;
+  const sens = 0.012;
+  joystick.smoothY = clamp(joystick.smoothY - joystick.ny * sens, 0.05, 0.95);
+  app.lanceHeight = joystick.smoothY;
+}
+
+function setupJoystick() {
+  const zone = document.getElementById('joystick-zone');
+  const base = document.getElementById('joystick-base');
+  const knob = document.getElementById('joystick-knob');
+  const maxR = 36;
+
+  function moveKnob(nx, ny) {
+    knob.style.transform = `translate(calc(-50% + ${nx * maxR}px), calc(-50% + ${ny * maxR}px))`;
+  }
+
+  zone.addEventListener('pointerdown', (e) => {
+    if (app.phase !== PHASE.CHARGE) return;
+    joystick.active = true;
+    joystick.id = e.pointerId;
+    zone.setPointerCapture(e.pointerId);
+  });
+
+  zone.addEventListener('pointermove', (e) => {
+    if (!joystick.active || e.pointerId !== joystick.id) return;
+    const rect = base.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    let nx = (e.clientX - cx) / maxR;
+    let ny = (e.clientY - cy) / maxR;
+    const len = Math.hypot(nx, ny);
+    if (len > 1) { nx /= len; ny /= len; }
+    joystick.nx = nx;
+    joystick.ny = ny;
+    moveKnob(nx, ny);
+  });
+
+  function endJoy(e) {
+    if (e.pointerId !== joystick.id) return;
+    joystick.active = false;
+    joystick.nx = 0;
+    joystick.ny = 0;
+    moveKnob(0, 0);
+  }
+  zone.addEventListener('pointerup', endJoy);
+  zone.addEventListener('pointercancel', endJoy);
+}
+
+function setupThrust() {
+  document.getElementById('btn-thrust').addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    if (app.phase !== PHASE.CHARGE || app.lanceActionTiming != null) return;
+    if (!app.matchStartTime) return;
+    const timing = Sim.getChargeProgress(Date.now(), app.matchStartTime);
+    app.lanceActionTiming = timing;
+    send('set_lance_timing', { lanceActionTiming: timing });
+    showToast(`突き！ タイミング ${Math.round(timing * 100)}%`);
+  });
+}
+
+function clamp(v, min, max) {
+  return Math.max(min, Math.min(max, v));
+}
+
+// ── Init ──────────────────────────────────────────────
+document.getElementById('btn-create').addEventListener('click', () => {
+  app.playerName = document.getElementById('player-name').value.trim() || '騎士A';
+  send('create_room', { name: app.playerName });
+});
+
 document.getElementById('btn-join-open').addEventListener('click', () => {
   document.getElementById('lobby-menu').classList.add('hidden');
   document.getElementById('lobby-join').classList.remove('hidden');
 });
+
 document.getElementById('btn-join-back').addEventListener('click', () => {
   document.getElementById('lobby-join').classList.add('hidden');
   document.getElementById('lobby-menu').classList.remove('hidden');
 });
+
 document.getElementById('btn-join').addEventListener('click', () => {
   const code = document.getElementById('room-code-input').value.trim();
-  if (!code) { showError('ルームコードを入力'); return; }
-  send('join_room', { code, name: getPlayerName() });
+  if (!code) return showError('ルームコードを入力してください');
+  app.playerName = document.getElementById('player-name').value.trim() || '騎士B';
+  send('join_room', { code, name: app.playerName });
 });
-document.getElementById('btn-start').addEventListener('click', () => send('start_game'));
-document.getElementById('btn-leave').addEventListener('click', () => { send('leave_room'); resetToLobby(); });
-document.getElementById('btn-back-lobby').addEventListener('click', () => { send('leave_room'); resetToLobby(); });
 
-// ── Game phases ─────────────────────────────────────────
-function initRenderer() {
-  if (fps) return;
-  fps = new FPSRenderer(canvas, app.role);
-  fps.resize();
-  if (typeof ResizeObserver !== 'undefined') {
-    new ResizeObserver(() => fps?.resize()).observe(canvas);
-  }
-  checkOrientation();
-  try { screen.orientation?.lock?.('landscape').catch(() => {}); } catch { /* noop */ }
-}
+document.getElementById('btn-leave').addEventListener('click', () => {
+  send('leave_room');
+  resetToLobby();
+});
+
+document.getElementById('btn-ready').addEventListener('click', () => {
+  if (app.phase !== PHASE.EQUIPMENT) return;
+  app.myReady = !app.myReady;
+  updateEquipReadyUI();
+  send('set_ready', { ready: app.myReady });
+});
+
+document.getElementById('btn-rematch').addEventListener('click', () => {
+  if (app.rematchSent) return;
+  app.rematchSent = true;
+  document.getElementById('btn-rematch').disabled = true;
+  send('rematch_request', { accept: true });
+  onRematchState({
+    hostRematch: app.role === 'host',
+    guestRematch: app.role === 'guest',
+  });
+});
+
+document.getElementById('btn-back-lobby').addEventListener('click', () => {
+  send('leave_room');
+  resetToLobby();
+});
 
 function checkOrientation() {
   const hint = document.getElementById('rotate-hint');
-  const isPortrait = window.innerHeight > window.innerWidth;
-  hint?.classList.toggle('hidden', !isPortrait);
+  const landscape = window.innerWidth > window.innerHeight;
+  hint.classList.toggle('hidden', landscape);
 }
-window.addEventListener('resize', checkOrientation);
+
+window.addEventListener('resize', () => {
+  checkOrientation();
+  renderer?.resize();
+});
 window.addEventListener('orientationchange', checkOrientation);
 
-function showBanner(text, ms = 0) {
-  phaseBanner.textContent = text;
-  phaseBanner.classList.remove('hidden');
-  if (ms > 0) setTimeout(() => phaseBanner.classList.add('hidden'), ms);
-}
-
-function onGameIntro(msg) {
-  app.round = msg.round;
-  app.phase = PHASE.INTRO;
-  app.phaseEndsAt = msg.endsAt;
-  showBanner(`⚔ 第${msg.round}試合 — ${msg.message}`, 0);
-  document.getElementById('hud-objective').textContent = '中央の壁を挟んで配置 — 3秒後に突撃';
-  document.getElementById('hud-round').textContent = `ROUND ${msg.round}`;
-  aimBarWrap.classList.add('hidden');
-  countdownOverlay.classList.add('hidden');
-  startTick();
-}
-
-function onRoundStart(msg) {
-  app.round = msg.round;
-  app.phase = PHASE.AIM;
-  app.x = 0.5;
-  app.height = 0.5;
-  app.chargeT = 0;
-  app.phaseEndsAt = msg.aimEndsAt;
-
-  const myKey = app.role;
-  app.armor = { ...msg.armor[myKey] };
-  const oppKey = app.role === 'host' ? 'guest' : 'host';
-  app.oppArmor = { ...msg.armor[oppKey] };
-  updateArmorUI();
-
-  phaseBanner.classList.add('hidden');
-  showBanner('構え — 槍の高さと左右を調整', 0);
-  document.getElementById('hud-objective').textContent = '構え — 8秒後に3秒カウント→突撃';
-  aimBarWrap.classList.remove('hidden');
-  countdownOverlay.classList.add('hidden');
-  document.getElementById('result-toast').classList.add('hidden');
-  fadeBlood();
-  startTick();
-}
-
-function onCountdownStart(msg) {
-  app.phase = PHASE.COUNTDOWN;
-  app.phaseEndsAt = msg.endsAt;
-  aimBarWrap.classList.add('hidden');
-  phaseBanner.classList.add('hidden');
-  countdownOverlay.classList.remove('hidden');
-  document.getElementById('hud-objective').textContent = '一斉突撃まで…';
-  startTick();
-}
-
-function onChargeStart(msg) {
-  app.phase = PHASE.CHARGE;
-  app.chargeStart = performance.now();
-  app.chargeDuration = msg.duration;
-  app.phaseEndsAt = msg.endsAt;
-  countdownOverlay.classList.add('hidden');
-  countdownNum.textContent = '突撃!';
-  showBanner('突撃!', 1200);
-  document.getElementById('hud-objective').textContent = '突撃中！';
-  startTick();
-}
-
-const ZONE_LABELS = { head: '頭', torso: '胴体', legs: '足' };
-
-function onRoundResult(msg) {
-  app.phase = PHASE.RESULT;
-  app.chargeT = 1;
-  const myAttack = app.role === 'host' ? msg.hostAttack : msg.guestAttack;
-  const theirAttack = app.role === 'host' ? msg.guestAttack : msg.hostAttack;
-
-  app.armor = { ...msg.armor[app.role] };
-  app.oppArmor = { ...msg.armor[app.role === 'host' ? 'guest' : 'host'] };
-  updateArmorUI();
-
-  const toast = document.getElementById('result-toast');
-  let html = '';
-  if (myAttack.damage > 0) {
-    html += `HIT <span class="hit">${ZONE_LABELS[myAttack.zone]}</span> <span class="dmg">${myAttack.damage}</span><br>`;
-  } else html += 'MISS<br>';
-  if (theirAttack.damage > 0) {
-    html += `被弾 <span class="hit">${ZONE_LABELS[theirAttack.zone]}</span> <span class="dmg">${theirAttack.damage}</span>`;
-    showBlood(theirAttack.damage);
-    app.shake = theirAttack.damage * 0.2;
-  } else html += 'DODGE';
-  toast.innerHTML = html;
-  toast.classList.remove('hidden');
-  document.getElementById('hud-objective').textContent = '結果';
-
-  if (msg.gameOver) setTimeout(() => showGameOver(msg), 3500);
-  else startTick();
-}
-
-function showGameOver(msg) {
-  app.phase = PHASE.FINISHED;
-  const won = msg.winner === app.role;
-  const draw = msg.winner === 'draw';
-  document.getElementById('result-title').textContent = draw ? '引き分け' : won ? 'VICTORY' : 'DEFEAT';
-  document.getElementById('result-message').textContent = draw
-    ? '両騎士とも鎧が砕け散った…'
-    : won ? '見事な馬上槍試合の勝利！' : '鎧が全て砕かれました…';
-  showScreen('result');
-}
-
-function updateArmorUI() {
-  for (const [part, label] of [['head', 'H'], ['torso', 'B'], ['legs', 'L']]) {
-    document.getElementById(`armor-${part}`).style.width = `${app.armor[part]}%`;
-    document.getElementById(`val-${part}`).textContent = app.armor[part];
-  }
-  document.getElementById('opp-armor').textContent =
-    `H${app.oppArmor.head} B${app.oppArmor.torso} L${app.oppArmor.legs}`;
-}
-
-// ── Timers / HUD tick ───────────────────────────────────
-function startTick() {
-  stopTick();
-  tickInterval = setInterval(tickHUD, 100);
-  tickHUD();
-}
-
-function stopTick() {
-  if (tickInterval) clearInterval(tickInterval);
-  tickInterval = null;
-}
-
-function tickHUD() {
-  const left = Math.max(0, app.phaseEndsAt - Date.now());
-
-  if (app.phase === PHASE.AIM) {
-    const total = AIM_DURATION;
-    const pct = Math.min(100, ((total - left) / total) * 100);
-    aimBar.style.width = `${pct}%`;
-    const sec = Math.ceil(left / 1000);
-    showBanner(`構え — あと ${sec} 秒で一斉突撃`, 0);
-  }
-
-  if (app.phase === PHASE.COUNTDOWN) {
-    const sec = Math.ceil(left / 1000);
-    countdownNum.textContent = sec > 0 ? sec : '突撃!';
-    if (sec <= 0) countdownNum.classList.add('go');
-    else countdownNum.classList.remove('go');
-  }
-
-  if (app.phase === PHASE.CHARGE) {
-    app.chargeT = Math.min(1, 1 - left / app.chargeDuration);
-  }
-}
-
-// ── Blood ───────────────────────────────────────────────
-function showBlood(damage) {
-  const intensity = damage / 100;
-  bloodOverlay.classList.remove('fade', 'creep');
-  bloodOverlay.style.opacity = '0';
-  const spread = 45 - intensity * 18;
-  bloodOverlay.style.background = [
-    `radial-gradient(ellipse 120% 80% at 0% 0%, rgba(150,12,12,${0.6 + intensity * 0.3}) 0%, transparent ${spread}%)`,
-    `radial-gradient(ellipse 120% 80% at 100% 0%, rgba(150,12,12,${0.6 + intensity * 0.3}) 0%, transparent ${spread}%)`,
-    `radial-gradient(ellipse 120% 80% at 0% 100%, rgba(130,10,10,${0.55 + intensity * 0.35}) 0%, transparent ${spread}%)`,
-    `radial-gradient(ellipse 120% 80% at 100% 100%, rgba(130,10,10,${0.55 + intensity * 0.35}) 0%, transparent ${spread}%)`,
-  ].join(',');
-  void bloodOverlay.offsetWidth;
-  bloodOverlay.classList.add('creep');
-  bloodOverlay.style.opacity = String(0.3 + intensity * 0.5);
-}
-
-function fadeBlood() {
-  bloodOverlay.classList.remove('creep');
-  bloodOverlay.style.opacity = '0';
-  bloodOverlay.classList.add('fade');
-  setTimeout(() => { bloodOverlay.classList.remove('fade'); bloodOverlay.style.opacity = '0'; }, 4000);
-}
-
-// ── 左スティック（槍の焦点・8方向・滑らか）────────────────
-const joyBase = document.getElementById('joystick-base');
-const joyKnob = document.getElementById('joystick-knob');
-const JOY_RADIUS = 42;
-
-function joyPos(clientX, clientY) {
-  const rect = joyBase.getBoundingClientRect();
-  const cx = rect.left + rect.width / 2;
-  const cy = rect.top + rect.height / 2;
-  let dx = clientX - cx;
-  let dy = clientY - cy;
-  const dist = Math.sqrt(dx * dx + dy * dy);
-  if (dist > JOY_RADIUS) {
-    dx = (dx / dist) * JOY_RADIUS;
-    dy = (dy / dist) * JOY_RADIUS;
-  }
-  joyKnob.style.transform = `translate(${dx}px, ${dy}px)`;
-  joystick.targetNx = dx / JOY_RADIUS;
-  joystick.targetNy = -dy / JOY_RADIUS;
-}
-
-function joyReset() {
-  joystick.active = false;
-  joystick.id = null;
-  joystick.targetNx = 0;
-  joystick.targetNy = 0;
-  joyKnob.style.transform = 'translate(0, 0)';
-}
-
-joyBase.addEventListener('touchstart', (e) => {
-  e.preventDefault();
-  joystick.active = true;
-  joystick.id = e.changedTouches[0].identifier;
-  joyPos(e.changedTouches[0].clientX, e.changedTouches[0].clientY);
-}, { passive: false });
-
-joyBase.addEventListener('touchmove', (e) => {
-  e.preventDefault();
-  for (const t of e.changedTouches) {
-    if (t.identifier === joystick.id) joyPos(t.clientX, t.clientY);
-  }
-}, { passive: false });
-
-joyBase.addEventListener('touchend', (e) => {
-  for (const t of e.changedTouches) {
-    if (t.identifier === joystick.id) joyReset();
-  }
-});
-
-joyBase.addEventListener('mousedown', (e) => {
-  joystick.active = true;
-  joyPos(e.clientX, e.clientY);
-  const onMove = (ev) => joyPos(ev.clientX, ev.clientY);
-  const onUp = () => { joyReset(); window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
-  window.addEventListener('mousemove', onMove);
-  window.addEventListener('mouseup', onUp);
-});
-
-// ── アクションボタン ────────────────────────────────────
-const stabBtn = document.getElementById('btn-stab');
-const dodgeBtn = document.getElementById('btn-dodge');
-
-function doStab() {
-  if (app.phase !== PHASE.AIM && app.phase !== PHASE.CHARGE) return;
-  app.stabT = 0.35;
-  send('stab');
-}
-
-function doDodge() {
-  if (app.phase !== PHASE.AIM && app.phase !== PHASE.CHARGE) return;
-  app.dodgeT = 0.5;
-  send('dodge');
-}
-
-function bindActionBtn(btn, action) {
-  btn.addEventListener('touchstart', (e) => { e.preventDefault(); btn.classList.add('pressed'); action(); }, { passive: false });
-  btn.addEventListener('touchend', () => btn.classList.remove('pressed'));
-  btn.addEventListener('mousedown', () => { btn.classList.add('pressed'); action(); });
-  btn.addEventListener('mouseup', () => btn.classList.remove('pressed'));
-}
-
-bindActionBtn(stabBtn, doStab);
-bindActionBtn(dodgeBtn, doDodge);
-
-function applyInput() {
-  const canControl = app.phase === PHASE.AIM || app.phase === PHASE.CHARGE;
-  if (!canControl) {
-    joystick.smoothNx *= 0.9;
-    joystick.smoothNy *= 0.9;
-    return;
-  }
-
-  joystick.smoothNx += (joystick.targetNx - joystick.smoothNx) * AIM_SMOOTH;
-  joystick.smoothNy += (joystick.targetNy - joystick.smoothNy) * AIM_SMOOTH;
-
-  const dead = 0.08;
-  if (Math.abs(joystick.smoothNx) > dead || Math.abs(joystick.smoothNy) > dead) {
-    app.x = Math.max(0.1, Math.min(0.9, app.x + joystick.smoothNx * AIM_SENS_X));
-    app.height = Math.max(0.05, Math.min(0.95, app.height + joystick.smoothNy * AIM_SENS_Y));
-  }
-
-  const now = performance.now();
-  if (now - app.lastAimSend > AIM_SEND_INTERVAL) {
-    app.lastAimSend = now;
-    send('update_aim', { x: app.x, height: app.height });
-  }
-}
-
-// ── Render loop ─────────────────────────────────────────
-function loop() {
-  applyInput();
-
-  if (fps && app.phase !== PHASE.LOBBY && app.phase !== PHASE.FINISHED) {
-    if (app.phase === PHASE.CHARGE && app.phaseEndsAt) {
-      const left = Math.max(0, app.phaseEndsAt - Date.now());
-      app.chargeT = Math.min(1, 1 - left / app.chargeDuration);
-    }
-    fps.setState({
-      phase: app.phase,
-      x: app.x,
-      height: app.height,
-      chargeT: app.chargeT,
-      shake: app.shake,
-      stabT: app.stabT,
-      dodgeT: app.dodgeT,
-      playerSide: app.role,
-    });
-    if (app.stabT > 0) app.stabT -= 0.016;
-    if (app.dodgeT > 0) app.dodgeT -= 0.016;
-    fps.updateDust();
-    fps.render();
-  }
-
-  requestAnimationFrame(loop);
-}
-
+setupJoystick();
+setupThrust();
+checkOrientation();
 connect();
-requestAnimationFrame(loop);

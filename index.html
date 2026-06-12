@@ -4,25 +4,24 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta name="screen-orientation" content="landscape">
-  <title>ROCK YOU! — 馬上槍試合</title>
+  <title>Joust Royale — オンライン馬上槍</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <!-- Lobby -->
   <div id="screen-lobby" class="screen active">
     <div class="lobby-card">
-      <h1>ROCK YOU!</h1>
-      <p class="subtitle">14世紀・馬上槍試合 — オンライン対戦</p>
+      <h1>JOUST ROYALE</h1>
+      <p class="subtitle">オンライン1vs1 馬上槍 — 横画面推奨</p>
       <p class="rules-hint">
-        騎士Aと騎士Bが中央の壁を挟んで向かい合い、<br>
-        一斉に突撃して槍を突き合わせます。<br>
-        <strong>横画面</strong>でプレイしてください。
+        ルームを作成するかコードで参加。<br>
+        2人揃ったら装備選択 → READY → 突撃！
       </p>
 
       <div id="lobby-menu">
         <input type="text" id="player-name" placeholder="騎士の名前" maxlength="12">
-        <button id="btn-create" class="action-btn full">ルームを作成（騎士A）</button>
-        <button id="btn-join-open" class="action-btn full secondary">ルームに参加（騎士B）</button>
+        <button id="btn-create" class="action-btn full">ルームを作成</button>
+        <button id="btn-join-open" class="action-btn full secondary">ルームに参加</button>
       </div>
 
       <div id="lobby-join" class="hidden">
@@ -36,7 +35,6 @@
         <p class="room-code-label">ルームコード</p>
         <p class="room-code" id="display-code">------</p>
         <p class="hint" id="waiting-message">対戦相手の参加を待っています…</p>
-        <button id="btn-start" class="action-btn full hidden">ゲームスタート</button>
         <button id="btn-leave" class="text-btn">ルームを退出</button>
       </div>
 
@@ -45,100 +43,99 @@
     </div>
   </div>
 
+  <!-- Equipment -->
+  <div id="screen-equipment" class="screen">
+    <div class="equip-layout">
+      <header class="equip-header">
+        <h2>装備選択</h2>
+        <p class="equip-round" id="equip-round">ROUND 1</p>
+        <p class="equip-scores" id="equip-scores">0 — 0</p>
+      </header>
+
+      <div class="equip-grid">
+        <div class="equip-group" data-cat="horse">
+          <h3>馬</h3>
+          <div class="equip-options" id="opts-horse"></div>
+        </div>
+        <div class="equip-group" data-cat="lance">
+          <h3>槍</h3>
+          <div class="equip-options" id="opts-lance"></div>
+        </div>
+        <div class="equip-group" data-cat="armor">
+          <h3>鎧</h3>
+          <div class="equip-options" id="opts-armor"></div>
+        </div>
+        <div class="equip-group" data-cat="shield">
+          <h3>盾</h3>
+          <div class="equip-options" id="opts-shield"></div>
+        </div>
+      </div>
+
+      <div class="equip-footer">
+        <div class="opp-ready" id="opp-ready-status">相手: 装備選択中…</div>
+        <button id="btn-ready" class="action-btn ready-btn">READY</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Game -->
   <div id="screen-game" class="screen">
     <canvas id="game-canvas"></canvas>
-    <div id="blood-overlay"></div>
 
-    <!-- BF-style HUD -->
     <div id="hud">
-      <div class="hud-compass">
-        <div class="compass-bar">
-          <span class="compass-mark">W</span>
-          <span class="compass-mark active">N</span>
-          <span class="compass-mark">E</span>
-        </div>
-        <p id="hud-objective" class="hud-objective">馬上槍試合</p>
-      </div>
-
       <div class="hud-topline">
         <span id="hud-round">ROUND 1</span>
-        <span id="hud-role" class="hud-role">騎士A</span>
+        <span id="hud-score">0 — 0</span>
+        <span id="hud-role" class="hud-role">騎士</span>
       </div>
-
-      <div id="crosshair">
-        <div class="ch-dot"></div>
-        <div class="ch-line ch-t"></div>
-        <div class="ch-line ch-b"></div>
-        <div class="ch-line ch-l"></div>
-        <div class="ch-line ch-r"></div>
+      <div class="hud-names">
+        <span id="my-name">自分</span>
+        <span id="opp-name">相手</span>
       </div>
-
-      <div class="hud-armor">
-        <div class="armor-stat">
-          <span class="armor-label">HEAD</span>
-          <span class="armor-num" id="val-head">100</span>
-          <div class="armor-bar"><div class="armor-fill" id="armor-head"></div></div>
-        </div>
-        <div class="armor-stat">
-          <span class="armor-label">BODY</span>
-          <span class="armor-num" id="val-torso">100</span>
-          <div class="armor-bar"><div class="armor-fill" id="armor-torso"></div></div>
-        </div>
-        <div class="armor-stat">
-          <span class="armor-label">LEGS</span>
-          <span class="armor-num" id="val-legs">100</span>
-          <div class="armor-bar"><div class="armor-fill" id="armor-legs"></div></div>
-        </div>
+      <div id="lance-height-bar" class="lance-bar-wrap">
+        <div id="lance-height-fill" class="lance-bar-fill"></div>
+        <span class="lance-bar-label">槍の高さ</span>
       </div>
-
-      <div class="hud-opp">
-        <span class="opp-tag">ENEMY</span>
-        <span id="opp-name">—</span>
-        <span id="opp-armor">H100 B100 L100</span>
-      </div>
-
       <div id="phase-banner" class="phase-banner hidden"></div>
       <div id="countdown-overlay" class="countdown-overlay hidden">
         <span id="countdown-num">3</span>
       </div>
-      <div id="aim-bar-wrap" class="aim-bar-wrap hidden">
-        <div id="aim-bar" class="aim-bar"></div>
-      </div>
     </div>
 
-    <!-- 左: 槍の焦点スティック（8方向） -->
     <div id="joystick-zone">
       <div id="joystick-base">
         <div id="joystick-knob"></div>
       </div>
-      <span class="joy-label">槍の焦点</span>
+      <span class="joy-label">槍の高さ</span>
     </div>
 
-    <!-- 右: アクションボタン -->
     <div id="action-buttons">
-      <button id="btn-stab" class="act-btn act-main" aria-label="刺す">刺す</button>
-      <button id="btn-dodge" class="act-btn act-dodge" aria-label="回避">回避</button>
-    </div>
-
-    <div id="rotate-hint" class="rotate-hint hidden">
-      <p>📱 端末を<strong>横向き</strong>にしてください</p>
+      <button id="btn-thrust" class="act-btn act-main" aria-label="突く">突く</button>
     </div>
 
     <div id="result-toast" class="hidden"></div>
-  </div>
-
-  <!-- Game Over -->
-  <div id="screen-result" class="screen">
-    <div class="lobby-card">
-      <h2 id="result-title">試合終了</h2>
-      <p id="result-message"></p>
-      <button id="btn-back-lobby" class="action-btn full">ロビーに戻る</button>
+    <div id="rotate-hint" class="rotate-hint hidden">
+      <p>端末を<strong>横向き</strong>にしてください</p>
     </div>
   </div>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-  <script src="renderer3d.js"></script>
+  <!-- Result -->
+  <div id="screen-result" class="screen">
+    <div class="lobby-card result-card">
+      <h2 id="result-title">ラウンド結果</h2>
+      <p id="result-message"></p>
+      <div class="reward-box" id="reward-box"></div>
+      <p class="score-final" id="result-scores"></p>
+      <button id="btn-rematch" class="action-btn full">再戦</button>
+      <p id="rematch-status" class="hint hidden"></p>
+      <button id="btn-back-lobby" class="text-btn">ロビーに戻る</button>
+    </div>
+  </div>
+
+  <script src="/shared/constants.js"></script>
+  <script src="/shared/equipment.js"></script>
+  <script src="/shared/sim.js"></script>
+  <script src="renderer2d.js"></script>
   <script src="client.js"></script>
 </body>
 </html>
