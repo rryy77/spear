@@ -161,6 +161,12 @@ function handleMessage(msg) {
 function showScreen(name) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.getElementById(`screen-${name}`).classList.add('active');
+  if (name === 'game') {
+    requestAnimationFrame(() => {
+      resize();
+      requestAnimationFrame(resize);
+    });
+  }
 }
 
 function showError(msg) {
@@ -349,6 +355,7 @@ function showBlood(damage) {
 
 function fadeBlood() {
   bloodOverlay.classList.remove('creep');
+  bloodOverlay.style.opacity = '0';
   bloodOverlay.classList.add('fade');
   setTimeout(() => {
     bloodOverlay.classList.remove('fade');
@@ -389,12 +396,16 @@ function applyInput() {
 // ── FPS Renderer ────────────────────────────────────────
 function resize() {
   const rect = canvas.getBoundingClientRect();
-  canvas.width = rect.width * devicePixelRatio;
-  canvas.height = rect.height * devicePixelRatio;
-  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  if (rect.width < 1 || rect.height < 1) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = Math.round(rect.width * dpr);
+  canvas.height = Math.round(rect.height * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 window.addEventListener('resize', resize);
-resize();
+if (typeof ResizeObserver !== 'undefined') {
+  new ResizeObserver(() => resize()).observe(canvas);
+}
 
 function drawFPS(w, h) {
   app.bobPhase += 0.06;
@@ -628,10 +639,10 @@ function drawFirstPerson(w, h, bob) {
 
   ctx.restore();
 
-  // Vignette
-  const vig = ctx.createRadialGradient(w / 2, h / 2, h * 0.3, w / 2, h / 2, h * 0.85);
+  // Vignette（軽めにして視界を確保）
+  const vig = ctx.createRadialGradient(w / 2, h / 2, h * 0.35, w / 2, h / 2, h * 0.9);
   vig.addColorStop(0, 'transparent');
-  vig.addColorStop(1, 'rgba(0,0,0,0.45)');
+  vig.addColorStop(1, 'rgba(0,0,0,0.22)');
   ctx.fillStyle = vig;
   ctx.fillRect(0, 0, w, h);
 }
@@ -679,8 +690,17 @@ function loop() {
     app.chargeProgress = t;
   }
 
-  const w = canvas.width / devicePixelRatio;
-  const h = canvas.height / devicePixelRatio;
+  let w = canvas.clientWidth;
+  let h = canvas.clientHeight;
+  if (w < 1 || h < 1) {
+    resize();
+    w = canvas.clientWidth;
+    h = canvas.clientHeight;
+  }
+  if (w < 1 || h < 1) {
+    requestAnimationFrame(loop);
+    return;
+  }
   ctx.clearRect(0, 0, w, h);
 
   if (app.phase !== PHASE.LOBBY && app.phase !== PHASE.FINISHED) {
