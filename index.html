@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>ROCK YOU! — 馬上槍試合</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Lobby -->
+  <div id="screen-lobby" class="screen active">
+    <div class="lobby-card">
+      <h1>⚔ ROCK YOU! ⚔</h1>
+      <p class="subtitle">14世紀・馬上槍試合 — オンライン対戦</p>
+
+      <div id="lobby-menu">
+        <input type="text" id="player-name" placeholder="騎士の名前" maxlength="12" value="">
+        <button id="btn-create" class="action-btn full">ルームを作成</button>
+        <button id="btn-join-open" class="action-btn full secondary">ルームに参加</button>
+      </div>
+
+      <div id="lobby-join" class="hidden">
+        <p class="hint">ルームコードを入力</p>
+        <input type="text" id="room-code-input" placeholder="例: A1B2C3" maxlength="6" autocapitalize="characters">
+        <button id="btn-join" class="action-btn full">参加する</button>
+        <button id="btn-join-back" class="text-btn">戻る</button>
+      </div>
+
+      <div id="lobby-waiting" class="hidden">
+        <p class="room-code-label">ルームコード</p>
+        <p class="room-code" id="display-code">------</p>
+        <p class="hint" id="waiting-message">対戦相手の参加を待っています…</p>
+        <button id="btn-start" class="action-btn full hidden">ゲームスタート</button>
+        <button id="btn-leave" class="text-btn">ルームを退出</button>
+      </div>
+
+      <p id="lobby-error" class="error-msg hidden"></p>
+      <p id="connection-status" class="status-msg">接続中…</p>
+    </div>
+  </div>
+
+  <!-- Game -->
+  <div id="screen-game" class="screen">
+    <canvas id="game-canvas"></canvas>
+
+    <div id="blood-overlay"></div>
+
+    <div id="hud">
+      <div class="hud-top">
+        <span id="hud-round">第 1 試合</span>
+        <span id="hud-phase">位置合わせ</span>
+        <span id="hud-timer">8</span>
+      </div>
+      <div class="armor-panel">
+        <div class="armor-part" data-part="head">
+          <span class="part-label">頭</span>
+          <div class="part-bar"><div class="part-fill" id="armor-head"></div></div>
+          <span class="part-val" id="val-head">100</span>
+        </div>
+        <div class="armor-part" data-part="torso">
+          <span class="part-label">胴</span>
+          <div class="part-bar"><div class="part-fill" id="armor-torso"></div></div>
+          <span class="part-val" id="val-torso">100</span>
+        </div>
+        <div class="armor-part" data-part="legs">
+          <span class="part-label">足</span>
+          <div class="part-bar"><div class="part-fill" id="armor-legs"></div></div>
+          <span class="part-val" id="val-legs">100</span>
+        </div>
+      </div>
+      <div class="opponent-panel">
+        <span class="opp-name" id="opp-name">対戦相手</span>
+        <div class="opp-armor">
+          <span id="opp-head">頭100</span>
+          <span id="opp-torso">胴100</span>
+          <span id="opp-legs">足100</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="controls" id="game-controls">
+      <button class="arrow-btn" data-dir="up" aria-label="槍を上げる">▲</button>
+      <div class="arrow-row">
+        <button class="arrow-btn" data-dir="left" aria-label="左へ">◀</button>
+        <button class="arrow-btn" data-dir="down" aria-label="槍を下げる">▼</button>
+        <button class="arrow-btn" data-dir="right" aria-label="右へ">▶</button>
+      </div>
+    </div>
+
+    <div id="result-toast" class="hidden"></div>
+  </div>
+
+  <!-- Game Over -->
+  <div id="screen-result" class="screen">
+    <div class="lobby-card">
+      <h2 id="result-title">試合終了</h2>
+      <p id="result-message"></p>
+      <button id="btn-back-lobby" class="action-btn full">ロビーに戻る</button>
+    </div>
+  </div>
+
+  <script src="client.js"></script>
+</body>
+</html>
