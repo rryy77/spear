@@ -38,10 +38,11 @@ const app = {
   lastAimSend: 0,
   shake: 0,
   stabT: 0,
+  dodgeT: 0,
 };
 
 const joystick = { active: false, dx: 0, id: null };
-const heldAngle = { up: false, down: false };
+const angleJoy = { active: false, dy: 0, id: null };
 let tickInterval = null;
 
 // ── WebSocket ───────────────────────────────────────────
@@ -448,31 +449,85 @@ joyBase.addEventListener('mousedown', (e) => {
   window.addEventListener('mouseup', onUp);
 });
 
-// ── アクションボタン ────────────────────────────────────
-function bindBtn(id, key, onTap) {
-  const btn = document.getElementById(id);
-  const press = (e) => { e.preventDefault(); heldAngle[key] = true; btn.classList.add('pressed'); };
-  const release = (e) => { e.preventDefault(); heldAngle[key] = false; btn.classList.remove('pressed'); };
-  btn.addEventListener('touchstart', (e) => { press(e); onTap?.(); }, { passive: false });
-  btn.addEventListener('touchend', release, { passive: false });
-  btn.addEventListener('mousedown', (e) => { press(e); onTap?.(); });
-  btn.addEventListener('mouseup', release);
-  btn.addEventListener('mouseleave', release);
+// ── 右スティック（槍の角度・上下のみ）────────────────────
+const angleBase = document.getElementById('angle-joystick-base');
+const angleKnob = document.getElementById('angle-joystick-knob');
+const ANGLE_RADIUS = 38;
+
+function angleJoyPos(clientX, clientY) {
+  const rect = angleBase.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2;
+  const cy = rect.top + rect.height / 2;
+  let dx = clientX - cx;
+  let dy = clientY - cy;
+  dx = 0;
+  const dist = Math.abs(dy);
+  if (dist > ANGLE_RADIUS) dy = (dy / dist) * ANGLE_RADIUS;
+  angleKnob.style.transform = `translate(0, ${dy}px)`;
+  angleJoy.dy = -dy / ANGLE_RADIUS;
 }
 
-bindBtn('btn-angle-up', 'up');
-bindBtn('btn-angle-down', 'down');
+function angleJoyReset() {
+  angleJoy.active = false;
+  angleJoy.dy = 0;
+  angleJoy.id = null;
+  angleKnob.style.transform = 'translate(0, 0)';
+}
 
+angleBase.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  angleJoy.active = true;
+  angleJoy.id = e.changedTouches[0].identifier;
+  angleJoyPos(e.changedTouches[0].clientX, e.changedTouches[0].clientY);
+}, { passive: false });
+
+angleBase.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    if (t.identifier === angleJoy.id) angleJoyPos(t.clientX, t.clientY);
+  }
+}, { passive: false });
+
+angleBase.addEventListener('touchend', (e) => {
+  for (const t of e.changedTouches) {
+    if (t.identifier === angleJoy.id) angleJoyReset();
+  }
+});
+
+angleBase.addEventListener('mousedown', (e) => {
+  angleJoy.active = true;
+  angleJoyPos(e.clientX, e.clientY);
+  const onMove = (ev) => angleJoyPos(ev.clientX, ev.clientY);
+  const onUp = () => { angleJoyReset(); window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+  window.addEventListener('mousemove', onMove);
+  window.addEventListener('mouseup', onUp);
+});
+
+// ── アクションボタン ────────────────────────────────────
 const stabBtn = document.getElementById('btn-stab');
+const dodgeBtn = document.getElementById('btn-dodge');
+
 function doStab() {
   if (app.phase !== PHASE.AIM && app.phase !== PHASE.CHARGE) return;
   app.stabT = 0.35;
   send('stab');
 }
-stabBtn.addEventListener('touchstart', (e) => { e.preventDefault(); stabBtn.classList.add('pressed'); doStab(); }, { passive: false });
-stabBtn.addEventListener('touchend', () => stabBtn.classList.remove('pressed'));
-stabBtn.addEventListener('mousedown', () => { stabBtn.classList.add('pressed'); doStab(); });
-stabBtn.addEventListener('mouseup', () => stabBtn.classList.remove('pressed'));
+
+function doDodge() {
+  if (app.phase !== PHASE.AIM && app.phase !== PHASE.CHARGE) return;
+  app.dodgeT = 0.5;
+  send('dodge');
+}
+
+function bindActionBtn(btn, action) {
+  btn.addEventListener('touchstart', (e) => { e.preventDefault(); btn.classList.add('pressed'); action(); }, { passive: false });
+  btn.addEventListener('touchend', () => btn.classList.remove('pressed'));
+  btn.addEventListener('mousedown', () => { btn.classList.add('pressed'); action(); });
+  btn.addEventListener('mouseup', () => btn.classList.remove('pressed'));
+}
+
+bindActionBtn(stabBtn, doStab);
+bindActionBtn(dodgeBtn, doDodge);
 
 function applyInput() {
   const canControl = app.phase === PHASE.AIM || app.phase === PHASE.CHARGE;
@@ -481,8 +536,9 @@ function applyInput() {
   if (joystick.dx !== 0) {
     app.x = Math.max(0.1, Math.min(0.9, app.x + joystick.dx * MOVE_SPEED));
   }
-  if (heldAngle.up)   app.height = Math.max(0.05, app.height - HEIGHT_SPEED);
-  if (heldAngle.down) app.height = Math.min(0.95, app.height + HEIGHT_SPEED);
+  if (angleJoy.dy !== 0) {
+    app.height = Math.max(0.05, Math.min(0.95, app.height + angleJoy.dy * HEIGHT_SPEED));
+  }
 
   const now = performance.now();
   if (now - app.lastAimSend > AIM_SEND_INTERVAL) {
@@ -507,9 +563,11 @@ function loop() {
       chargeT: app.chargeT,
       shake: app.shake,
       stabT: app.stabT,
+      dodgeT: app.dodgeT,
       playerSide: app.role,
     });
     if (app.stabT > 0) app.stabT -= 0.016;
+    if (app.dodgeT > 0) app.dodgeT -= 0.016;
     fps.updateDust();
     fps.render();
   }

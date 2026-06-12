@@ -5,8 +5,9 @@ class FPSRenderer {
     this.playerSide = playerSide; // 'host' = 騎士A（壁の左）, 'guest' = 騎士B（壁の右）
     this.isHost = playerSide === 'host';
     this.laneX = this.isHost ? -2.6 : 2.6;
-    this.facingZ = this.isHost ? 1 : -1;
-    this.wallSide = this.isHost ? 1 : -1; // 壁が見える方向
+    this.startZ = this.isHost ? 48 : -48;
+    this.endZ = this.isHost ? -48 : 48;
+    this.wallSide = this.isHost ? 1 : -1;
 
     this.clock = new THREE.Clock();
     this.bobPhase = 0;
@@ -16,6 +17,7 @@ class FPSRenderer {
     this.aimHeight = 0.5;
     this.phase = 'lobby';
     this.stabT = 0;
+    this.dodgeT = 0;
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -37,7 +39,7 @@ class FPSRenderer {
     this._buildWeapon();
     this._buildOpponentKnight();
 
-    this.playerZ = this.isHost ? -48 : 48;
+    this.playerZ = this.startZ;
     this.resize();
   }
 
@@ -246,12 +248,13 @@ class FPSRenderer {
     this.renderer.setSize(w, h, false);
   }
 
-  setState({ phase, x, height, chargeT, shake, stabT, playerSide }) {
+  setState({ phase, x, height, chargeT, shake, stabT, dodgeT, playerSide }) {
     this.phase = phase;
     this.aimX = x;
     this.aimHeight = height;
     this.chargeT = chargeT;
     if (stabT > this.stabT) this.stabT = stabT;
+    if (dodgeT > this.dodgeT) this.dodgeT = dodgeT;
     if (shake > this.shake) this.shake = shake;
     if (playerSide) {
       this.playerSide = playerSide;
@@ -270,20 +273,22 @@ class FPSRenderer {
     const shakeX = this.shake > 0 ? (Math.random() - 0.5) * this.shake * 0.006 : 0;
     if (this.shake > 0) this.shake *= 0.88;
 
-    const lateral = (this.aimX - 0.5) * 1.8;
+    if (this.dodgeT > 0) this.dodgeT -= dt;
+    const dodgeShift = this.dodgeT > 0 ? this.wallSide * this.dodgeT * 0.5 : 0;
+    const lateral = (this.aimX - 0.5) * 1.8 + dodgeShift;
     const ease = this.chargeT * this.chargeT * (3 - 2 * this.chargeT);
 
     if (this.phase === 'charge' || this.phase === 'result') {
-      this.playerZ = this.isHost ? -48 + ease * 96 : 48 - ease * 96;
+      this.playerZ = this.startZ + (this.endZ - this.startZ) * ease;
     } else if (this.phase === 'intro' || this.phase === 'aim' || this.phase === 'countdown') {
-      this.playerZ = this.isHost ? -48 : 48;
+      this.playerZ = this.startZ;
     }
 
     const camY = 2.35 + gallop + gallop2;
     this.camera.position.set(this.laneX + lateral + shakeX, camY, this.playerZ);
     this.camera.rotation.order = 'YXZ';
 
-    const yaw = this.isHost ? 0 : Math.PI;
+    const yaw = this.isHost ? Math.PI : 0;
     const pitch = (this.aimHeight - 0.5) * -0.35;
     this.camera.rotation.set(pitch, yaw, 0);
 
@@ -295,10 +300,12 @@ class FPSRenderer {
     this.weapon.position.y = -0.45 + gallop * 0.4;
 
     if (this.phase === 'charge' || this.phase === 'result' || this.phase === 'aim' || this.phase === 'countdown' || this.phase === 'intro') {
-      const oppZ = this.isHost ? 48 - ease * 96 : -48 + ease * 96;
+      const oppStartZ = -this.startZ;
+      const oppEndZ = -this.endZ;
+      const oppZ = oppStartZ + (oppEndZ - oppStartZ) * ease;
       const oppX = this.isHost ? 2.6 : -2.6;
       this.opponent.position.set(oppX, 0, oppZ);
-      this.opponent.rotation.y = this.isHost ? Math.PI : 0;
+      this.opponent.rotation.y = this.isHost ? 0 : Math.PI;
       this.opponent.visible = true;
     } else {
       this.opponent.visible = false;

@@ -115,11 +115,18 @@
       <span class="joy-label">移動</span>
     </div>
 
-    <!-- 右: アクションボタン（eFootball風） -->
-    <div id="action-buttons">
-      <button id="btn-angle-up" class="act-btn act-sub" aria-label="槍を上げる">▲</button>
-      <button id="btn-stab" class="act-btn act-main" aria-label="刺す">刺す</button>
-      <button id="btn-angle-down" class="act-btn act-sub" aria-label="槍を下げる">▼</button>
+    <!-- 右: 槍角度スティック + アクションボタン -->
+    <div id="right-controls">
+      <div id="angle-joystick-zone">
+        <div id="angle-joystick-base">
+          <div id="angle-joystick-knob"></div>
+        </div>
+        <span class="joy-label">槍の角度</span>
+      </div>
+      <div id="action-buttons">
+        <button id="btn-stab" class="act-btn act-main" aria-label="刺す">刺す</button>
+        <button id="btn-dodge" class="act-btn act-dodge" aria-label="回避">回避</button>
+      </div>
     </div>
 
     <div id="rotate-hint" class="rotate-hint hidden">

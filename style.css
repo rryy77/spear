@@ -261,7 +261,7 @@ html, body {
 .hud-armor {
   position: absolute;
   bottom: 24px;
-  right: 130px;
+  right: 200px;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -438,18 +438,52 @@ html, body {
   letter-spacing: 0.1em;
 }
 
-/* アクションボタン — 右下（eFootball風） */
-#action-buttons {
+/* 右側コントロール */
+#right-controls {
   position: absolute;
-  bottom: 20px;
-  right: 24px;
+  bottom: 16px;
+  right: 20px;
   z-index: 25;
-  display: grid;
-  grid-template-columns: 56px 72px;
-  grid-template-rows: 56px 64px 56px;
-  gap: 8px;
-  align-items: center;
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
   pointer-events: auto;
+}
+
+#angle-joystick-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+#angle-joystick-base {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.4);
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+}
+
+#angle-joystick-knob {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: rgba(232, 192, 96, 0.9);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  transform: translate(0, 0);
+  pointer-events: none;
+}
+
+#action-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 4px;
 }
 
 .act-btn {
@@ -466,25 +500,20 @@ html, body {
 }
 
 .act-main {
-  grid-row: 2;
-  grid-column: 2;
-  width: 72px;
-  height: 72px;
-  font-size: 1rem;
+  width: 68px;
+  height: 68px;
+  font-size: 0.95rem;
   background: linear-gradient(180deg, #4a9a48, #2d6b2c);
   border: 2px solid rgba(255, 255, 255, 0.25);
 }
 
-.act-sub {
-  width: 52px;
-  height: 52px;
-  font-size: 1.1rem;
-  background: linear-gradient(180deg, rgba(60, 100, 60, 0.9), rgba(30, 60, 30, 0.95));
-  border: 1px solid rgba(255, 255, 255, 0.2);
+.act-dodge {
+  width: 56px;
+  height: 56px;
+  font-size: 0.8rem;
+  background: linear-gradient(180deg, #4a6a9a, #2d4a6b);
+  border: 2px solid rgba(255, 255, 255, 0.2);
 }
-
-#btn-angle-up { grid-row: 1; grid-column: 2; justify-self: center; }
-#btn-angle-down { grid-row: 3; grid-column: 2; justify-self: center; }
 
 .act-btn.pressed,
 .act-btn:active {
@@ -542,8 +571,9 @@ html, body {
 @media (max-height: 420px) {
   #joystick-base { width: 90px; height: 90px; }
   #joystick-knob { width: 40px; height: 40px; }
-  .act-main { width: 60px; height: 60px; font-size: 0.85rem; }
-  .act-sub { width: 44px; height: 44px; }
+  #angle-joystick-base { width: 80px; height: 80px; }
+  .act-main { width: 56px; height: 56px; font-size: 0.8rem; }
+  .act-dodge { width: 48px; height: 48px; }
   #countdown-num { font-size: 4rem; }
-  .hud-armor { right: 110px; bottom: 16px; }
+  .hud-armor { right: 170px; bottom: 12px; }
 }

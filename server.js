@@ -51,6 +51,7 @@ function createPlayer(ws, name) {
     height: 0.5,
     armor: defaultArmor(),
     stab: false,
+    dodge: false,
   };
 }
 
@@ -82,6 +83,7 @@ function heightToZone(h) {
 function calcHitQuality(attacker, defender) {
   let gap = Math.abs(attacker.x - defender.x);
   if (attacker.stab) gap *= 0.82;
+  if (defender.dodge) gap += 0.14;
   if (gap < 0.09) return 100;
   if (gap < 0.2) return 50;
   if (gap < 0.32) return 33;
@@ -158,6 +160,8 @@ function beginCharge(room) {
   const guestHitsHost = resolveAttack(room.guest, room.host);
   room.host.stab = false;
   room.guest.stab = false;
+  room.host.dodge = false;
+  room.guest.dodge = false;
   room.pendingResult = { hostHitsGuest, guestHitsHost };
 
   broadcastRoom(room, 'charge_start', {
@@ -327,6 +331,16 @@ wss.on('connection', (ws) => {
         if (!player) return;
         player.stab = true;
         setTimeout(() => { player.stab = false; }, 400);
+        break;
+      }
+
+      case 'dodge': {
+        const room = rooms.get(roomCode);
+        if (!room || (room.phase !== 'aim' && room.phase !== 'charge')) return;
+        const player = role === 'host' ? room.host : room.guest;
+        if (!player) return;
+        player.dodge = true;
+        setTimeout(() => { player.dodge = false; }, 600);
         break;
       }
 
