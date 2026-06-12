@@ -44,69 +44,156 @@ class FPSRenderer {
   }
 
   _buildLights() {
-    this.scene.add(new THREE.HemisphereLight(0xe8f0ff, 0x8a7050, 0.5));
-    const sun = new THREE.DirectionalLight(0xfff0d0, 1.4);
-    sun.position.set(20, 40, 10);
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.camera.near = 1;
-    sun.shadow.camera.far = 120;
-    sun.shadow.camera.left = -40;
-    sun.shadow.camera.right = 40;
-    sun.shadow.camera.top = 40;
-    sun.shadow.camera.bottom = -40;
-    this.scene.add(sun);
+    this.scene.add(new THREE.HemisphereLight(0xc8d8f0, 0x6a5840, 0.45));
+    const oculus = new THREE.DirectionalLight(0xfff8e8, 1.6);
+    oculus.position.set(0, 55, 0);
+    oculus.castShadow = true;
+    oculus.shadow.mapSize.set(2048, 2048);
+    oculus.shadow.camera.near = 1;
+    oculus.shadow.camera.far = 120;
+    oculus.shadow.camera.left = -45;
+    oculus.shadow.camera.right = 45;
+    oculus.shadow.camera.top = 45;
+    oculus.shadow.camera.bottom = -45;
+    this.scene.add(oculus);
+    const fill = new THREE.DirectionalLight(0xffe8c8, 0.35);
+    fill.position.set(-25, 15, 20);
+    this.scene.add(fill);
+  }
+
+  _makeStoneTexture(base = '#c8b8a0') {
+    const c = document.createElement('canvas');
+    c.width = 256;
+    c.height = 256;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = base;
+    ctx.fillRect(0, 0, 256, 256);
+    for (let i = 0; i < 4000; i++) {
+      const v = 160 + Math.random() * 60;
+      ctx.fillStyle = `rgb(${v},${v - 12},${v - 28})`;
+      ctx.fillRect(Math.random() * 256, Math.random() * 256, 1 + Math.random() * 2, 1 + Math.random() * 2);
+    }
+    const tex = new THREE.CanvasTexture(c);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(2, 2);
+    return tex;
+  }
+
+  _stoneMat(base = '#c8b8a0', roughness = 0.88) {
+    return new THREE.MeshStandardMaterial({
+      map: this._makeStoneTexture(base),
+      roughness,
+      metalness: 0.04,
+    });
+  }
+
+  _ellipsePoint(rx, rz, angle) {
+    return { x: Math.cos(angle) * rx, z: Math.sin(angle) * rz };
   }
 
   _buildColosseum() {
-    const stone = new THREE.MeshStandardMaterial({ color: 0xb8a898, roughness: 0.85 });
-    const darkStone = new THREE.MeshStandardMaterial({ color: 0x8a7a6a, roughness: 0.9 });
+    const stone = this._stoneMat('#c8b8a0');
+    const stoneDark = this._stoneMat('#9a8a78', 0.92);
+    const sandMat = new THREE.MeshStandardMaterial({ color: 0xb89058, roughness: 0.96, metalness: 0.02 });
+    const rx = 58;
+    const rz = 40;
 
-    const arenaFloor = new THREE.Mesh(
-      new THREE.CircleGeometry(55, 48),
-      new THREE.MeshStandardMaterial({ color: 0xc4a060, roughness: 0.92 })
+    const sand = new THREE.Mesh(new THREE.CircleGeometry(1, 64), sandMat);
+    sand.scale.set(rx * 0.92, rz * 0.92, 1);
+    sand.rotation.x = -Math.PI / 2;
+    sand.receiveShadow = true;
+    this.scene.add(sand);
+
+    const sky = new THREE.Mesh(
+      new THREE.SphereGeometry(130, 32, 16, 0, Math.PI * 2, 0, Math.PI * 0.55),
+      new THREE.MeshBasicMaterial({ color: 0x9ec8e8, side: THREE.BackSide })
     );
-    arenaFloor.rotation.x = -Math.PI / 2;
-    arenaFloor.receiveShadow = true;
-    this.scene.add(arenaFloor);
+    sky.position.y = 15;
+    this.scene.add(sky);
 
-    for (let tier = 0; tier < 4; tier++) {
-      const r = 42 + tier * 6;
-      const h = 3.5;
-      const y = h * tier + 0.5;
-      for (let i = 0; i < 32; i++) {
-        const a = (i / 32) * Math.PI * 2;
-        const arch = new THREE.Mesh(new THREE.BoxGeometry(3.5, h, 2.2), tier % 2 ? stone : darkStone);
-        arch.position.set(Math.cos(a) * r, y + h / 2, Math.sin(a) * r);
-        arch.rotation.y = -a;
-        arch.castShadow = true;
-        this.scene.add(arch);
+    const oculus = new THREE.Mesh(
+      new THREE.CircleGeometry(14, 32),
+      new THREE.MeshBasicMaterial({ color: 0xd8ecff })
+    );
+    oculus.rotation.x = -Math.PI / 2;
+    oculus.position.y = 52;
+    this.scene.add(oculus);
 
-        if (i % 2 === 0) {
-          const banner = new THREE.Mesh(
-            new THREE.PlaneGeometry(1.5, 2.5),
-            new THREE.MeshStandardMaterial({
-              color: [0x8b1a1a, 0x1a3a6b, 0xc9a227][i % 3],
-              side: THREE.DoubleSide,
-            })
-          );
-          banner.position.set(Math.cos(a) * (r - 1.5), y + h * 0.7, Math.sin(a) * (r - 1.5));
-          banner.rotation.y = -a + Math.PI / 2;
-          this.scene.add(banner);
+    for (let i = 0; i < 8; i++) {
+      const ray = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.1, 4, 50, 8, 1, true),
+        new THREE.MeshBasicMaterial({ color: 0xfff8e8, transparent: true, opacity: 0.06, side: THREE.DoubleSide })
+      );
+      ray.position.set((i - 4) * 3, 25, 0);
+      this.scene.add(ray);
+    }
+
+    for (let tier = 0; tier < 5; tier++) {
+      const tierRx = rx + 6 + tier * 8;
+      const tierRz = rz + 4 + tier * 6;
+      const tierH = 3.8;
+      const baseY = tier * tierH + 0.2;
+      const arches = 40 + tier * 6;
+
+      for (let i = 0; i < arches; i++) {
+        const a = (i / arches) * Math.PI * 2;
+        const p = this._ellipsePoint(tierRx, tierRz, a);
+        const g = new THREE.Group();
+        g.position.set(p.x, baseY + tierH / 2, p.z);
+        g.lookAt(0, baseY + tierH / 2, 0);
+
+        const pillarW = 0.55;
+        const pillar = new THREE.Mesh(new THREE.BoxGeometry(pillarW, tierH, pillarW), tier % 2 ? stone : stoneDark);
+        const pillar2 = pillar.clone();
+        pillar.position.x = -1.4;
+        pillar2.position.x = 1.4;
+        g.add(pillar, pillar2);
+
+        const archTop = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.55, 0.7), stoneDark);
+        archTop.position.y = tierH / 2 - 0.2;
+        g.add(archTop);
+
+        const opening = new THREE.Mesh(
+          new THREE.PlaneGeometry(2.2, tierH - 0.8),
+          new THREE.MeshStandardMaterial({ color: 0x1a1410, roughness: 1 })
+        );
+        opening.position.z = 0.2;
+        g.add(opening);
+
+        this.scene.add(g);
+
+        if (tier >= 1 && i % 3 === 0) {
+          const crowdY = baseY + 0.6 + Math.random() * (tierH - 1);
+          for (let c = 0; c < 4; c++) {
+            const off = this._ellipsePoint(tierRx - 1.5 - Math.random() * 2, tierRz - 1 - Math.random() * 1.5, a + (c - 1.5) * 0.02);
+            const person = new THREE.Mesh(
+              new THREE.CylinderGeometry(0.12, 0.14, 0.55, 6),
+              new THREE.MeshStandardMaterial({ color: new THREE.Color().setHSL(Math.random(), 0.35, 0.28 + Math.random() * 0.2) })
+            );
+            person.position.set(off.x, crowdY, off.z);
+            this.scene.add(person);
+          }
         }
       }
+
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(1, 0.35, 6, 64), stoneDark);
+      ring.scale.set(tierRx, 0.5, tierRz);
+      ring.rotation.x = Math.PI / 2;
+      ring.position.y = baseY + tierH;
+      this.scene.add(ring);
     }
 
-    for (let i = 0; i < 80; i++) {
-      const a = Math.random() * Math.PI * 2;
-      const r = 38 + Math.random() * 18;
-      const crowd = new THREE.Mesh(
-        new THREE.BoxGeometry(0.3, 0.6 + Math.random() * 0.4, 0.25),
-        new THREE.MeshStandardMaterial({ color: new THREE.Color().setHSL(Math.random(), 0.4, 0.35 + Math.random() * 0.2) })
-      );
-      crowd.position.set(Math.cos(a) * r, 2 + Math.random() * 8, Math.sin(a) * r);
-      this.scene.add(crowd);
+    for (let i = 0; i < 24; i++) {
+      const a = (i / 24) * Math.PI * 2;
+      const p = this._ellipsePoint(rx + 4, rz + 3, a);
+      const col = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.65, 5.5, 10), stone);
+      col.position.set(p.x, 2.75, p.z);
+      col.castShadow = true;
+      this.scene.add(col);
     }
+
+    this.scene.fog = new THREE.Fog(0xc9b898, 55, 130);
+    this.scene.background = new THREE.Color(0xa8c4d8);
   }
 
   _buildTiltWall() {

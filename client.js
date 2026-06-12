@@ -5,8 +5,9 @@ const PHASE = {
   COUNTDOWN: 'countdown', CHARGE: 'charge', RESULT: 'result', FINISHED: 'finished',
 };
 
-const MOVE_SPEED = 0.024;
-const HEIGHT_SPEED = 0.009;
+const AIM_SENS_X = 0.010;
+const AIM_SENS_Y = 0.009;
+const AIM_SMOOTH = 0.12;
 const AIM_SEND_INTERVAL = 80;
 const AIM_DURATION = 8000;
 
@@ -41,8 +42,11 @@ const app = {
   dodgeT: 0,
 };
 
-const joystick = { active: false, dx: 0, id: null };
-const angleJoy = { active: false, dy: 0, id: null };
+const joystick = {
+  active: false, id: null,
+  targetNx: 0, targetNy: 0,
+  smoothNx: 0, smoothNy: 0,
+};
 let tickInterval = null;
 
 // ── WebSocket ───────────────────────────────────────────
@@ -395,7 +399,7 @@ function fadeBlood() {
   setTimeout(() => { bloodOverlay.classList.remove('fade'); bloodOverlay.style.opacity = '0'; }, 4000);
 }
 
-// ── Joystick（横移動のみ）──────────────────────────────
+// ── 左スティック（槍の焦点・8方向・滑らか）────────────────
 const joyBase = document.getElementById('joystick-base');
 const joyKnob = document.getElementById('joystick-knob');
 const JOY_RADIUS = 42;
@@ -406,17 +410,21 @@ function joyPos(clientX, clientY) {
   const cy = rect.top + rect.height / 2;
   let dx = clientX - cx;
   let dy = clientY - cy;
-  dy = 0;
-  const dist = Math.abs(dx);
-  if (dist > JOY_RADIUS) dx = (dx / dist) * JOY_RADIUS;
-  joyKnob.style.transform = `translate(${dx}px, 0)`;
-  joystick.dx = dx / JOY_RADIUS;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  if (dist > JOY_RADIUS) {
+    dx = (dx / dist) * JOY_RADIUS;
+    dy = (dy / dist) * JOY_RADIUS;
+  }
+  joyKnob.style.transform = `translate(${dx}px, ${dy}px)`;
+  joystick.targetNx = dx / JOY_RADIUS;
+  joystick.targetNy = -dy / JOY_RADIUS;
 }
 
 function joyReset() {
   joystick.active = false;
-  joystick.dx = 0;
   joystick.id = null;
+  joystick.targetNx = 0;
+  joystick.targetNy = 0;
   joyKnob.style.transform = 'translate(0, 0)';
 }
 
@@ -449,60 +457,6 @@ joyBase.addEventListener('mousedown', (e) => {
   window.addEventListener('mouseup', onUp);
 });
 
-// ── 右スティック（槍の角度・上下のみ）────────────────────
-const angleBase = document.getElementById('angle-joystick-base');
-const angleKnob = document.getElementById('angle-joystick-knob');
-const ANGLE_RADIUS = 38;
-
-function angleJoyPos(clientX, clientY) {
-  const rect = angleBase.getBoundingClientRect();
-  const cx = rect.left + rect.width / 2;
-  const cy = rect.top + rect.height / 2;
-  let dx = clientX - cx;
-  let dy = clientY - cy;
-  dx = 0;
-  const dist = Math.abs(dy);
-  if (dist > ANGLE_RADIUS) dy = (dy / dist) * ANGLE_RADIUS;
-  angleKnob.style.transform = `translate(0, ${dy}px)`;
-  angleJoy.dy = -dy / ANGLE_RADIUS;
-}
-
-function angleJoyReset() {
-  angleJoy.active = false;
-  angleJoy.dy = 0;
-  angleJoy.id = null;
-  angleKnob.style.transform = 'translate(0, 0)';
-}
-
-angleBase.addEventListener('touchstart', (e) => {
-  e.preventDefault();
-  angleJoy.active = true;
-  angleJoy.id = e.changedTouches[0].identifier;
-  angleJoyPos(e.changedTouches[0].clientX, e.changedTouches[0].clientY);
-}, { passive: false });
-
-angleBase.addEventListener('touchmove', (e) => {
-  e.preventDefault();
-  for (const t of e.changedTouches) {
-    if (t.identifier === angleJoy.id) angleJoyPos(t.clientX, t.clientY);
-  }
-}, { passive: false });
-
-angleBase.addEventListener('touchend', (e) => {
-  for (const t of e.changedTouches) {
-    if (t.identifier === angleJoy.id) angleJoyReset();
-  }
-});
-
-angleBase.addEventListener('mousedown', (e) => {
-  angleJoy.active = true;
-  angleJoyPos(e.clientX, e.clientY);
-  const onMove = (ev) => angleJoyPos(ev.clientX, ev.clientY);
-  const onUp = () => { angleJoyReset(); window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
-  window.addEventListener('mousemove', onMove);
-  window.addEventListener('mouseup', onUp);
-});
-
 // ── アクションボタン ────────────────────────────────────
 const stabBtn = document.getElementById('btn-stab');
 const dodgeBtn = document.getElementById('btn-dodge');
@@ -531,13 +485,19 @@ bindActionBtn(dodgeBtn, doDodge);
 
 function applyInput() {
   const canControl = app.phase === PHASE.AIM || app.phase === PHASE.CHARGE;
-  if (!canControl) return;
-
-  if (joystick.dx !== 0) {
-    app.x = Math.max(0.1, Math.min(0.9, app.x + joystick.dx * MOVE_SPEED));
+  if (!canControl) {
+    joystick.smoothNx *= 0.9;
+    joystick.smoothNy *= 0.9;
+    return;
   }
-  if (angleJoy.dy !== 0) {
-    app.height = Math.max(0.05, Math.min(0.95, app.height + angleJoy.dy * HEIGHT_SPEED));
+
+  joystick.smoothNx += (joystick.targetNx - joystick.smoothNx) * AIM_SMOOTH;
+  joystick.smoothNy += (joystick.targetNy - joystick.smoothNy) * AIM_SMOOTH;
+
+  const dead = 0.08;
+  if (Math.abs(joystick.smoothNx) > dead || Math.abs(joystick.smoothNy) > dead) {
+    app.x = Math.max(0.1, Math.min(0.9, app.x + joystick.smoothNx * AIM_SENS_X));
+    app.height = Math.max(0.05, Math.min(0.95, app.height + joystick.smoothNy * AIM_SENS_Y));
   }
 
   const now = performance.now();

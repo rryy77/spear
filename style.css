@@ -261,7 +261,7 @@ html, body {
 .hud-armor {
   position: absolute;
   bottom: 24px;
-  right: 200px;
+  right: 120px;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -397,7 +397,7 @@ html, body {
   transition: width 0.1s linear;
 }
 
-/* Joystick — 左下（横移動のみ） */
+/* Joystick — 左下（槍の焦点・8方向） */
 #joystick-zone {
   position: absolute;
   bottom: 20px;
@@ -438,52 +438,16 @@ html, body {
   letter-spacing: 0.1em;
 }
 
-/* 右側コントロール */
-#right-controls {
-  position: absolute;
-  bottom: 16px;
-  right: 20px;
-  z-index: 25;
-  display: flex;
-  align-items: flex-end;
-  gap: 16px;
-  pointer-events: auto;
-}
-
-#angle-joystick-zone {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-}
-
-#angle-joystick-base {
-  width: 96px;
-  height: 96px;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.4);
-  border: 2px solid rgba(255, 255, 255, 0.2);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  touch-action: none;
-}
-
-#angle-joystick-knob {
-  width: 42px;
-  height: 42px;
-  border-radius: 50%;
-  background: rgba(232, 192, 96, 0.9);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
-  transform: translate(0, 0);
-  pointer-events: none;
-}
-
+/* 右下アクションボタン */
 #action-buttons {
+  position: absolute;
+  bottom: 20px;
+  right: 24px;
+  z-index: 25;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding-bottom: 4px;
+  pointer-events: auto;
 }
 
 .act-btn {
@@ -571,9 +535,8 @@ html, body {
 @media (max-height: 420px) {
   #joystick-base { width: 90px; height: 90px; }
   #joystick-knob { width: 40px; height: 40px; }
-  #angle-joystick-base { width: 80px; height: 80px; }
   .act-main { width: 56px; height: 56px; font-size: 0.8rem; }
   .act-dodge { width: 48px; height: 48px; }
   #countdown-num { font-size: 4rem; }
-  .hud-armor { right: 170px; bottom: 12px; }
+  .hud-armor { right: 100px; bottom: 12px; }
 }
