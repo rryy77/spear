@@ -5,8 +5,11 @@ const path = require('path');
 const crypto = require('crypto');
 
 const PORT = process.env.PORT || 3000;
-const AIM_DURATION_MS = 8000;
-const CHARGE_DURATION_MS = 2500;
+const INTRO_MS = 2500;
+const AIM_DURATION_MS = 10000;
+const COUNTDOWN_MS = 3000;
+const CHARGE_DURATION_MS = 3000;
+const RESULT_PAUSE_MS = 4500;
 
 const app = express();
 const server = http.createServer(app);
@@ -47,7 +50,6 @@ function createPlayer(ws, name) {
     x: 0.5,
     height: 0.5,
     armor: defaultArmor(),
-    ready: false,
   };
 }
 
@@ -63,30 +65,11 @@ function broadcastRoom(room, type, payload = {}, excludeWs = null) {
   }
 }
 
-function roomSnapshot(room) {
-  const players = {};
-  if (room.host) {
-    players.host = {
-      name: room.host.name,
-      armor: room.host.armor,
-      connected: room.host.ws.readyState === room.host.ws.OPEN,
-    };
+function clearRoomTimers(room) {
+  for (const key of ['introTimer', 'aimTimer', 'countdownTimer', 'chargeTimer', 'resultTimer']) {
+    if (room[key]) clearTimeout(room[key]);
+    room[key] = null;
   }
-  if (room.guest) {
-    players.guest = {
-      name: room.guest.name,
-      armor: room.guest.armor,
-      connected: room.guest.ws.readyState === room.guest.ws.OPEN,
-    };
-  }
-  return {
-    code: room.code,
-    phase: room.phase,
-    round: room.round,
-    aimEndsAt: room.aimEndsAt,
-    players,
-    isHost: undefined,
-  };
 }
 
 function heightToZone(h) {
@@ -116,7 +99,21 @@ function isDefeated(player) {
   return player.armor.head <= 0 && player.armor.torso <= 0 && player.armor.legs <= 0;
 }
 
+function startIntroThenRound(room) {
+  room.phase = 'intro';
+  const introEndsAt = Date.now() + INTRO_MS;
+  broadcastRoom(room, 'game_intro', {
+    round: room.round,
+    endsAt: introEndsAt,
+    hostName: room.host.name,
+    guestName: room.guest.name,
+    message: 'リストの両端から向かい合い、一斉に突撃します',
+  });
+  room.introTimer = setTimeout(() => startAimPhase(room), INTRO_MS);
+}
+
 function startAimPhase(room) {
+  if (!room.host || !room.guest) return;
   room.phase = 'aim';
   room.aimEndsAt = Date.now() + AIM_DURATION_MS;
   room.host.x = 0.5;
@@ -126,6 +123,7 @@ function startAimPhase(room) {
 
   broadcastRoom(room, 'round_start', {
     round: room.round,
+    aimEndsAt: room.aimEndsAt,
     aimDuration: AIM_DURATION_MS,
     armor: {
       host: room.host.armor,
@@ -133,59 +131,80 @@ function startAimPhase(room) {
     },
   });
 
-  if (room.aimTimer) clearTimeout(room.aimTimer);
-  room.aimTimer = setTimeout(() => resolveRound(room), AIM_DURATION_MS);
+  room.aimTimer = setTimeout(() => startCountdown(room), AIM_DURATION_MS);
 }
 
-function resolveRound(room) {
+function startCountdown(room) {
+  if (!room.host || !room.guest) return;
+  room.phase = 'countdown';
+  room.countdownEndsAt = Date.now() + COUNTDOWN_MS;
+
+  broadcastRoom(room, 'countdown_start', {
+    endsAt: room.countdownEndsAt,
+    duration: COUNTDOWN_MS,
+  });
+
+  room.countdownTimer = setTimeout(() => beginCharge(room), COUNTDOWN_MS);
+}
+
+function beginCharge(room) {
   if (!room.host || !room.guest) return;
   room.phase = 'charge';
+  room.chargeEndsAt = Date.now() + CHARGE_DURATION_MS;
 
   const hostHitsGuest = resolveAttack(room.host, room.guest);
   const guestHitsHost = resolveAttack(room.guest, room.host);
+  room.pendingResult = { hostHitsGuest, guestHitsHost };
 
-  broadcastRoom(room, 'charge_start', { duration: CHARGE_DURATION_MS });
+  broadcastRoom(room, 'charge_start', {
+    endsAt: room.chargeEndsAt,
+    duration: CHARGE_DURATION_MS,
+  });
 
-  setTimeout(() => {
-    room.phase = 'result';
+  room.chargeTimer = setTimeout(() => finishRound(room), CHARGE_DURATION_MS);
+}
 
-    const hostDefeated = isDefeated(room.host);
-    const guestDefeated = isDefeated(room.guest);
-    const gameOver = hostDefeated || guestDefeated;
-    let winner = null;
-    if (hostDefeated && !guestDefeated) winner = 'guest';
-    else if (guestDefeated && !hostDefeated) winner = 'host';
-    else if (hostDefeated && guestDefeated) winner = 'draw';
+function finishRound(room) {
+  if (!room.pendingResult) return;
+  room.phase = 'result';
+  const { hostHitsGuest, guestHitsHost } = room.pendingResult;
+  room.pendingResult = null;
 
-    broadcastRoom(room, 'round_result', {
-      round: room.round,
-      hostAttack: {
-        damage: hostHitsGuest.damage,
-        zone: hostHitsGuest.zone,
-        targetArmor: hostHitsGuest.armor,
-      },
-      guestAttack: {
-        damage: guestHitsHost.damage,
-        zone: guestHitsHost.zone,
-        targetArmor: guestHitsHost.armor,
-      },
-      armor: {
-        host: room.host.armor,
-        guest: room.guest.armor,
-      },
-      gameOver,
-      winner,
-    });
+  const hostDefeated = isDefeated(room.host);
+  const guestDefeated = isDefeated(room.guest);
+  const gameOver = hostDefeated || guestDefeated;
+  let winner = null;
+  if (hostDefeated && !guestDefeated) winner = 'guest';
+  else if (guestDefeated && !hostDefeated) winner = 'host';
+  else if (hostDefeated && guestDefeated) winner = 'draw';
 
-    if (gameOver) {
-      room.phase = 'finished';
-      return;
-    }
+  broadcastRoom(room, 'round_result', {
+    round: room.round,
+    hostAttack: {
+      damage: hostHitsGuest.damage,
+      zone: hostHitsGuest.zone,
+      targetArmor: hostHitsGuest.armor,
+    },
+    guestAttack: {
+      damage: guestHitsHost.damage,
+      zone: guestHitsHost.zone,
+      targetArmor: guestHitsHost.armor,
+    },
+    armor: {
+      host: room.host.armor,
+      guest: room.guest.armor,
+    },
+    gameOver,
+    winner,
+  });
 
-    room.round += 1;
-    if (room.resultTimer) clearTimeout(room.resultTimer);
-    room.resultTimer = setTimeout(() => startAimPhase(room), 3500);
-  }, CHARGE_DURATION_MS);
+  if (gameOver) {
+    room.phase = 'finished';
+    return;
+  }
+
+  room.round += 1;
+  room.resultTimer = setTimeout(() => startAimPhase(room), RESULT_PAUSE_MS);
 }
 
 function findRoomByWs(ws) {
@@ -201,20 +220,15 @@ function removePlayer(ws) {
 
   const wasHost = room.host?.ws === ws;
   const wasGuest = room.guest?.ws === ws;
-
   if (wasHost) room.host = null;
   if (wasGuest) room.guest = null;
 
-  if (room.aimTimer) clearTimeout(room.aimTimer);
-  if (room.resultTimer) clearTimeout(room.resultTimer);
-
+  clearRoomTimers(room);
   broadcastRoom(room, 'player_left', {
     message: wasHost ? 'ホストが退出しました' : '対戦相手が退出しました',
   });
 
-  if (!room.host && !room.guest) {
-    rooms.delete(room.code);
-  }
+  if (!room.host && !room.guest) rooms.delete(room.code);
 }
 
 wss.on('connection', (ws) => {
@@ -236,12 +250,14 @@ wss.on('connection', (ws) => {
         const code = generateRoomCode();
         const room = {
           code,
-          host: createPlayer(ws, msg.name || 'ホスト'),
+          host: createPlayer(ws, msg.name || '騎士A'),
           guest: null,
           phase: 'lobby',
           round: 1,
-          aimEndsAt: null,
+          introTimer: null,
           aimTimer: null,
+          countdownTimer: null,
+          chargeTimer: null,
           resultTimer: null,
         };
         rooms.set(code, room);
@@ -262,23 +278,13 @@ wss.on('connection', (ws) => {
           send(ws, 'error', { message: 'ルームは満員です' });
           return;
         }
-        room.guest = createPlayer(ws, msg.name || 'ゲスト');
+        room.guest = createPlayer(ws, msg.name || '騎士B');
         role = 'guest';
         roomCode = code;
         send(ws, 'room_joined', { code, role: 'guest' });
-        send(ws, 'lobby_update', {
-          ...roomSnapshot(room),
-          role: 'guest',
-          canStart: false,
-        });
-        send(room.host.ws, 'player_joined', {
-          guestName: room.guest.name,
-        });
-        send(room.host.ws, 'lobby_update', {
-          ...roomSnapshot(room),
-          role: 'host',
-          canStart: true,
-        });
+        send(ws, 'lobby_update', { role: 'guest', canStart: false });
+        send(room.host.ws, 'player_joined', { guestName: room.guest.name });
+        send(room.host.ws, 'lobby_update', { role: 'host', canStart: true });
         break;
       }
 
@@ -291,11 +297,12 @@ wss.on('connection', (ws) => {
         }
         room.phase = 'playing';
         room.round = 1;
+        clearRoomTimers(room);
         broadcastRoom(room, 'game_start', {
           hostName: room.host.name,
           guestName: room.guest.name,
         });
-        startAimPhase(room);
+        startIntroThenRound(room);
         break;
       }
 

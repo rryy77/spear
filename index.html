@@ -10,13 +10,17 @@
   <!-- Lobby -->
   <div id="screen-lobby" class="screen active">
     <div class="lobby-card">
-      <h1>⚔ ROCK YOU! ⚔</h1>
+      <h1>ROCK YOU!</h1>
       <p class="subtitle">14世紀・馬上槍試合 — オンライン対戦</p>
+      <p class="rules-hint">
+        騎士Aと騎士Bがリストの両端から向かい合い、<br>
+        一斉に突撃して槍を突き合わせます。
+      </p>
 
       <div id="lobby-menu">
-        <input type="text" id="player-name" placeholder="騎士の名前" maxlength="12" value="">
-        <button id="btn-create" class="action-btn full">ルームを作成</button>
-        <button id="btn-join-open" class="action-btn full secondary">ルームに参加</button>
+        <input type="text" id="player-name" placeholder="騎士の名前" maxlength="12">
+        <button id="btn-create" class="action-btn full">ルームを作成（騎士A）</button>
+        <button id="btn-join-open" class="action-btn full secondary">ルームに参加（騎士B）</button>
       </div>
 
       <div id="lobby-join" class="hidden">
@@ -42,48 +46,72 @@
   <!-- Game -->
   <div id="screen-game" class="screen">
     <canvas id="game-canvas"></canvas>
-
     <div id="blood-overlay"></div>
 
+    <!-- BF-style HUD -->
     <div id="hud">
-      <div class="hud-top">
-        <span id="hud-round">第 1 試合</span>
-        <span id="hud-phase">位置合わせ</span>
-        <span id="hud-timer">8</span>
+      <div class="hud-compass">
+        <div class="compass-bar">
+          <span class="compass-mark">W</span>
+          <span class="compass-mark active">N</span>
+          <span class="compass-mark">E</span>
+        </div>
+        <p id="hud-objective" class="hud-objective">馬上槍試合</p>
       </div>
-      <div class="armor-panel">
-        <div class="armor-part" data-part="head">
-          <span class="part-label">頭</span>
-          <div class="part-bar"><div class="part-fill" id="armor-head"></div></div>
-          <span class="part-val" id="val-head">100</span>
+
+      <div class="hud-topline">
+        <span id="hud-round">ROUND 1</span>
+        <span id="hud-role" class="hud-role">騎士A</span>
+      </div>
+
+      <div id="crosshair">
+        <div class="ch-dot"></div>
+        <div class="ch-line ch-t"></div>
+        <div class="ch-line ch-b"></div>
+        <div class="ch-line ch-l"></div>
+        <div class="ch-line ch-r"></div>
+      </div>
+
+      <div class="hud-armor">
+        <div class="armor-stat">
+          <span class="armor-label">HEAD</span>
+          <span class="armor-num" id="val-head">100</span>
+          <div class="armor-bar"><div class="armor-fill" id="armor-head"></div></div>
         </div>
-        <div class="armor-part" data-part="torso">
-          <span class="part-label">胴</span>
-          <div class="part-bar"><div class="part-fill" id="armor-torso"></div></div>
-          <span class="part-val" id="val-torso">100</span>
+        <div class="armor-stat">
+          <span class="armor-label">BODY</span>
+          <span class="armor-num" id="val-torso">100</span>
+          <div class="armor-bar"><div class="armor-fill" id="armor-torso"></div></div>
         </div>
-        <div class="armor-part" data-part="legs">
-          <span class="part-label">足</span>
-          <div class="part-bar"><div class="part-fill" id="armor-legs"></div></div>
-          <span class="part-val" id="val-legs">100</span>
+        <div class="armor-stat">
+          <span class="armor-label">LEGS</span>
+          <span class="armor-num" id="val-legs">100</span>
+          <div class="armor-bar"><div class="armor-fill" id="armor-legs"></div></div>
         </div>
       </div>
-      <div class="opponent-panel">
-        <span class="opp-name" id="opp-name">対戦相手</span>
-        <div class="opp-armor">
-          <span id="opp-head">頭100</span>
-          <span id="opp-torso">胴100</span>
-          <span id="opp-legs">足100</span>
-        </div>
+
+      <div class="hud-opp">
+        <span class="opp-tag">ENEMY</span>
+        <span id="opp-name">—</span>
+        <span id="opp-armor">H100 B100 L100</span>
+      </div>
+
+      <div id="phase-banner" class="phase-banner hidden"></div>
+      <div id="countdown-overlay" class="countdown-overlay hidden">
+        <span id="countdown-num">3</span>
+      </div>
+      <div id="aim-bar-wrap" class="aim-bar-wrap hidden">
+        <div id="aim-bar" class="aim-bar"></div>
       </div>
     </div>
 
     <div class="controls" id="game-controls">
-      <button class="arrow-btn" data-dir="up" aria-label="槍を上げる">▲</button>
+      <p class="ctrl-hint">◀▶ 左右　▲▼ 槍の高さ</p>
+      <button class="arrow-btn" data-dir="up">▲</button>
       <div class="arrow-row">
-        <button class="arrow-btn" data-dir="left" aria-label="左へ">◀</button>
-        <button class="arrow-btn" data-dir="down" aria-label="槍を下げる">▼</button>
-        <button class="arrow-btn" data-dir="right" aria-label="右へ">▶</button>
+        <button class="arrow-btn" data-dir="left">◀</button>
+        <button class="arrow-btn" data-dir="down">▼</button>
+        <button class="arrow-btn" data-dir="right">▶</button>
       </div>
     </div>
 
@@ -99,6 +127,8 @@
     </div>
   </div>
 
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="renderer3d.js"></script>
   <script src="client.js"></script>
 </body>
 </html>
