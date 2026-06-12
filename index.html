@@ -3,66 +3,78 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>馬上槍試合</title>
+  <title>馬上槍試合 — Joust</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <!-- Lobby -->
   <div id="screen-lobby" class="screen active">
     <div class="lobby-card">
       <h1>馬上槍試合</h1>
-      <p class="subtitle">タイミングで槍を突け！</p>
-
+      <p class="subtitle">Joust — 3回の突進で勝負</p>
       <div id="lobby-menu">
-        <input type="text" id="player-name" placeholder="名前" maxlength="12">
+        <input type="text" id="player-name" placeholder="騎士の名前" maxlength="12">
         <button id="btn-create" class="action-btn full">ルームを作成</button>
         <button id="btn-join-open" class="action-btn full secondary">ルームに参加</button>
       </div>
-
       <div id="lobby-join" class="hidden">
         <input type="text" id="room-code-input" placeholder="ルームコード" maxlength="6" autocapitalize="characters">
         <button id="btn-join" class="action-btn full">参加する</button>
         <button id="btn-join-back" class="text-btn">戻る</button>
       </div>
-
       <p id="lobby-error" class="error-msg hidden"></p>
       <p id="connection-status" class="status-msg">接続中…</p>
     </div>
   </div>
 
-  <!-- Game -->
   <div id="screen-game" class="screen">
     <canvas id="game-canvas"></canvas>
 
+    <div id="score-hud" class="score-hud hidden">
+      <div class="round-badge" id="round-badge">ROUND 1 / 3</div>
+      <div class="score-row">
+        <span class="score-you">YOU <strong id="score-you">0</strong></span>
+        <span class="score-opp">FOE <strong id="score-opp">0</strong></span>
+      </div>
+      <div class="pass-dots" id="pass-dots">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+      </div>
+    </div>
+
     <div id="hud">
+      <div id="round-banner" class="round-banner hidden">ROUND 1</div>
       <div id="countdown-overlay" class="countdown-overlay hidden">
         <span id="countdown-num">3</span>
       </div>
-
       <div id="verdict-display" class="verdict-display hidden">
-        <span id="verdict-text">PERFECT!</span>
+        <span id="verdict-text">PERFECT</span>
+        <span id="hit-zone-text" class="hit-zone-text"></span>
+        <span id="points-text" class="points-text"></span>
       </div>
-
       <div id="result-overlay" class="result-overlay hidden">
         <h2 id="result-title">勝利！</h2>
         <p id="result-detail"></p>
+        <p id="result-score" class="result-score"></p>
         <button id="btn-rematch" class="action-btn">再戦</button>
         <p id="rematch-status" class="rematch-hint hidden"></p>
         <button id="btn-back-lobby" class="text-btn">ロビーへ</button>
       </div>
-
       <div id="ready-bar" class="ready-bar hidden">
         <button id="btn-leave" class="text-btn">退出</button>
-        <p id="opp-ready-hint">相手を待っています…</p>
+        <p id="opp-ready-hint">相手の READY を待っています…</p>
         <button id="btn-ready" class="action-btn ready-btn">READY</button>
       </div>
     </div>
 
-    <div id="timing-ui" class="timing-ui hidden">
+    <div id="battle-ui" class="battle-ui hidden">
+      <div class="aim-row">
+        <button type="button" class="aim-btn" data-aim="HIGH">HIGH<br><small>兜</small></button>
+        <button type="button" class="aim-btn active" data-aim="MID">MID<br><small>盾</small></button>
+        <button type="button" class="aim-btn" data-aim="LOW">LOW<br><small>危険</small></button>
+      </div>
       <div class="timing-bar">
-        <div class="timing-zone zone-graze zone-left"></div>
+        <div class="timing-zone zone-side"></div>
         <div class="timing-zone zone-perfect">PERFECT</div>
-        <div class="timing-zone zone-graze zone-right"></div>
+        <div class="timing-zone zone-side"></div>
         <div id="timing-cursor" class="timing-cursor"></div>
       </div>
       <button id="btn-lance" class="lance-btn">LANCE!</button>

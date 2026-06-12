@@ -1,48 +1,42 @@
-// 馬上槍試合 — 縦画面タイミングゲーム
+// 馬上槍試合（Joust）— 3突進・狙い・タイミング
 
 const PHASE = {
-  LOBBY: 'lobby',
-  WAITING: 'waiting',
-  COUNTDOWN: 'countdown',
-  CHARGE: 'charge',
-  RESULT: 'result',
-  FINISHED: 'finished',
+  LOBBY: 'lobby', WAITING: 'waiting', COUNTDOWN: 'countdown',
+  CHARGE: 'charge', PASS_RESULT: 'pass_result', MATCH_RESULT: 'match_result', FINISHED: 'finished',
 };
 
 const Sim = JoustSim;
-const C = JOUST_CONSTANTS;
+const ROUNDS = JOUST_CONSTANTS.ROUNDS;
 
 const canvas = document.getElementById('game-canvas');
 let renderer = null;
 let rafId = null;
 
 const app = {
-  ws: null,
-  role: null,
-  roomCode: null,
-  playerName: '',
-  opponentName: '',
+  ws: null, role: null, roomCode: null,
+  playerName: '', opponentName: '',
   phase: PHASE.LOBBY,
-  myReady: false,
-  oppReady: false,
+  myReady: false, oppReady: false,
+  roundNumber: 1,
+  scores: { host: 0, guest: 0 },
+  myAim: 'MID',
+  oppAim: 'MID',
   matchStartTime: 0,
   tapped: false,
   countdownEndsAt: 0,
   rematchSent: false,
-  fx: {
-    shake: 0,
-    impactFlash: 0,
-    impactColor: null,
-    lanceBreak: false,
-    crowdCheer: 0,
-    slowMo: 1,
-    playerLanceOut: false,
-    enemyLanceOut: false,
-    playerKnock: 0,
-    enemyKnock: 0,
-    tier: null,
-  },
+  fx: defaultFx(),
 };
+
+function defaultFx() {
+  return {
+    shake: 0, impactFlash: 0, impactColor: null, crowdCheer: 0, slowMo: 1,
+    playerLanceOut: false, enemyLanceOut: false,
+    playerLanceBroken: false, enemyLanceBroken: false,
+    playerKnock: 0, enemyKnock: 0,
+    playerUnhorsed: false, enemyUnhorsed: false,
+  };
+}
 
 // ── WebSocket ───────────────────────────────────────────
 async function getWsUrl() {
@@ -54,17 +48,12 @@ async function getWsUrl() {
       if (data.wsUrl) return data.wsUrl.replace(/\/$/, '');
     }
   } catch { /* local */ }
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${proto}//${location.host}`;
+  return `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}`;
 }
 
 async function connect() {
   const url = await getWsUrl();
-  if (!url) {
-    setStatus('WebSocket未設定');
-    setTimeout(connect, 5000);
-    return;
-  }
+  if (!url) { setStatus('WebSocket未設定'); setTimeout(connect, 5000); return; }
   app.ws = new WebSocket(url);
   app.ws.onopen = () => setStatus('接続済み');
   app.ws.onclose = () => { setStatus('再接続中…'); setTimeout(connect, 2000); };
@@ -82,60 +71,35 @@ function handleMessage(msg) {
   switch (msg.type) {
     case 'connected': setStatus('接続済み'); break;
     case 'room_created':
-      app.role = msg.role;
-      app.roomCode = msg.code;
-      showLobbyWaiting(msg.code);
-      break;
+      app.role = msg.role; app.roomCode = msg.code;
+      showLobbyWaiting(msg.code); break;
     case 'room_joined':
-      app.role = msg.role;
-      app.roomCode = msg.code;
-      break;
+      app.role = msg.role; app.roomCode = msg.code; break;
     case 'player_joined':
-      app.opponentName = msg.guestName;
+      app.opponentName = msg.guestName; break;
+    case 'phase_waiting': onPhaseWaiting(msg); break;
+    case 'ready_update': onReadyUpdate(msg); break;
+    case 'round_countdown': onRoundCountdown(msg); break;
+    case 'round_start': onRoundStart(msg); break;
+    case 'aim_update':
+      if (msg.role !== app.role) app.oppAim = msg.selectedAimHeight;
       break;
-    case 'phase_waiting':
-      onPhaseWaiting(msg);
-      break;
-    case 'ready_update':
-      onReadyUpdate(msg);
-      break;
-    case 'match_countdown':
-      onMatchCountdown(msg);
-      break;
-    case 'match_start':
-      onMatchStart(msg);
-      break;
-    case 'timing_result':
-      onTimingResult(msg);
-      break;
-    case 'battle_result':
-      onBattleResult(msg);
-      break;
-    case 'phase_finished':
-      app.phase = PHASE.FINISHED;
-      break;
-    case 'rematch_state':
-      onRematchState(msg);
-      break;
-    case 'player_left':
-      showError(msg.message);
-      resetToLobby();
-      break;
-    case 'error':
-      showError(msg.message);
-      break;
+    case 'timing_result': onTimingResult(msg); break;
+    case 'hit_result': onHitResult(msg); break;
+    case 'match_result': onMatchResult(msg); break;
+    case 'phase_finished': app.phase = PHASE.FINISHED; break;
+    case 'rematch_state': onRematchState(msg); break;
+    case 'player_left': showError(msg.message); resetToLobby(); break;
+    case 'error': showError(msg.message); break;
   }
 }
 
-// ── Screens ───────────────────────────────────────────
+// ── UI ────────────────────────────────────────────────
 function showScreen(name) {
   document.querySelectorAll('.screen').forEach((s) => s.classList.remove('active'));
   document.getElementById(`screen-${name}`).classList.add('active');
   if (name === 'game') {
-    requestAnimationFrame(() => {
-      renderer?.resize();
-      requestAnimationFrame(() => renderer?.resize());
-    });
+    requestAnimationFrame(() => { renderer?.resize(); requestAnimationFrame(() => renderer?.resize()); });
   }
 }
 
@@ -156,19 +120,24 @@ function showLobbyWaiting(code) {
   document.getElementById('lobby-menu').classList.add('hidden');
   document.getElementById('lobby-join').classList.add('hidden');
   const wait = document.createElement('p');
-  wait.className = 'hint';
-  wait.id = 'waiting-code';
+  wait.className = 'hint'; wait.id = 'waiting-code';
   wait.textContent = `コード: ${code}`;
   document.querySelector('.lobby-card').appendChild(wait);
+}
+
+function hideOverlays() {
+  ['ready-bar', 'battle-ui', 'countdown-overlay', 'verdict-display', 'result-overlay', 'round-banner', 'score-hud']
+    .forEach((id) => document.getElementById(id)?.classList.add('hidden'));
+  document.getElementById('btn-ready')?.classList.remove('ready-on');
+  document.getElementById('btn-lance')?.classList.remove('pressed');
+  document.getElementById('btn-lance').disabled = false;
 }
 
 function resetToLobby() {
   stopGameLoop();
   app.phase = PHASE.LOBBY;
-  app.role = null;
-  app.roomCode = null;
-  app.rematchSent = false;
-  resetFx();
+  app.role = null; app.roomCode = null; app.rematchSent = false;
+  app.fx = defaultFx();
   document.getElementById('lobby-menu')?.classList.remove('hidden');
   document.getElementById('lobby-join')?.classList.add('hidden');
   document.getElementById('waiting-code')?.remove();
@@ -176,24 +145,37 @@ function resetToLobby() {
   showScreen('lobby');
 }
 
-function hideOverlays() {
-  document.getElementById('ready-bar').classList.add('hidden');
-  document.getElementById('timing-ui').classList.add('hidden');
-  document.getElementById('countdown-overlay').classList.add('hidden');
-  document.getElementById('verdict-display').classList.add('hidden');
-  document.getElementById('result-overlay').classList.add('hidden');
-  document.getElementById('btn-ready').classList.remove('ready-on');
-  document.getElementById('btn-ready').textContent = 'READY';
-  document.getElementById('btn-lance').disabled = false;
+function myScore() {
+  return app.role === 'host' ? app.scores.host : app.scores.guest;
 }
 
-function resetFx() {
-  app.fx = {
-    shake: 0, impactFlash: 0, impactColor: null, lanceBreak: false,
-    crowdCheer: 0, slowMo: 1, playerLanceOut: false, enemyLanceOut: false,
-    playerKnock: 0, enemyKnock: 0, tier: null,
-  };
+function oppScore() {
+  return app.role === 'host' ? app.scores.guest : app.scores.host;
 }
+
+function updateScoreHud() {
+  document.getElementById('score-you').textContent = String(myScore());
+  document.getElementById('score-opp').textContent = String(oppScore());
+  document.getElementById('round-badge').textContent = `ROUND ${app.roundNumber} / ${ROUNDS}`;
+  document.querySelectorAll('.pass-dots .dot').forEach((d, i) => {
+    d.classList.toggle('done', i < app.roundNumber - 1);
+    d.classList.toggle('current', i === app.roundNumber - 1);
+  });
+}
+
+function setAim(aim) {
+  app.myAim = aim;
+  document.querySelectorAll('.aim-btn').forEach((b) => {
+    b.classList.toggle('active', b.dataset.aim === aim);
+  });
+  if (app.phase === PHASE.COUNTDOWN || app.phase === PHASE.CHARGE) {
+    send('set_aim', { selectedAimHeight: aim });
+  }
+}
+
+const ZONE_LABELS = {
+  helmet: '兜命中', shield: '盾命中', torso: '胴命中', horse: '馬命中',
+};
 
 // ── Match flow ────────────────────────────────────────
 function enterGameScreen() {
@@ -205,42 +187,32 @@ function enterGameScreen() {
 
 function onPhaseWaiting(msg) {
   app.phase = PHASE.WAITING;
-  app.myReady = false;
-  app.oppReady = false;
-  app.tapped = false;
-  resetFx();
+  app.roundNumber = 1;
+  app.scores = msg.score || { host: 0, guest: 0 };
+  app.myReady = false; app.oppReady = false;
+  app.myAim = 'MID'; app.oppAim = 'MID';
+  app.fx = defaultFx();
   parsePlayers(msg);
   hideOverlays();
   document.getElementById('ready-bar').classList.remove('hidden');
-  document.getElementById('result-overlay').classList.add('hidden');
-  document.getElementById('btn-lance').classList.remove('pressed');
   updateReadyUI();
   enterGameScreen();
 }
 
 function parsePlayers(msg) {
   if (msg.host) {
-    if (app.role === 'host') {
-      app.playerName = msg.host.name;
-      app.myReady = msg.host.ready;
-    } else {
-      app.opponentName = msg.host.name;
-      app.oppReady = msg.host.ready;
-    }
+    if (app.role === 'host') { app.playerName = msg.host.name; app.myReady = msg.host.ready; }
+    else { app.opponentName = msg.host.name; app.oppReady = msg.host.ready; }
   }
   if (msg.guest) {
-    if (app.role === 'guest') {
-      app.playerName = msg.guest.name;
-      app.myReady = msg.guest.ready;
-    } else {
-      app.opponentName = msg.guest.name;
-      app.oppReady = msg.guest.ready;
-    }
+    if (app.role === 'guest') { app.playerName = msg.guest.name; app.myReady = msg.guest.ready; }
+    else { app.opponentName = msg.guest.name; app.oppReady = msg.guest.ready; }
   }
 }
 
 function onReadyUpdate(msg) {
   parsePlayers(msg);
+  if (msg.score) app.scores = msg.score;
   updateReadyUI();
 }
 
@@ -249,56 +221,87 @@ function updateReadyUI() {
   btn.textContent = app.myReady ? 'READY ✓' : 'READY';
   btn.classList.toggle('ready-on', app.myReady);
   document.getElementById('opp-ready-hint').textContent =
-    app.oppReady ? 'まもなく開始…' : '相手の READY を待っています…';
+    app.oppReady ? 'まもなく試合開始…' : '相手の READY を待っています…';
 }
 
-function onMatchCountdown(msg) {
+function onRoundCountdown(msg) {
   app.phase = PHASE.COUNTDOWN;
+  app.roundNumber = msg.roundNumber;
+  app.scores = msg.score || app.scores;
   app.countdownEndsAt = msg.endsAt;
-  document.getElementById('ready-bar').classList.add('hidden');
+  hideOverlays();
+  document.getElementById('score-hud').classList.remove('hidden');
+  document.getElementById('round-banner').classList.remove('hidden');
+  document.getElementById('round-banner').textContent = `ROUND ${app.roundNumber}`;
   document.getElementById('countdown-overlay').classList.remove('hidden');
-  document.getElementById('countdown-num').classList.remove('go');
+  document.getElementById('battle-ui').classList.remove('hidden');
+  setAim('MID');
+  updateScoreHud();
 }
 
-function onMatchStart(msg) {
+function onRoundStart(msg) {
   app.phase = PHASE.CHARGE;
+  app.roundNumber = msg.roundNumber;
   app.matchStartTime = msg.matchStartTime;
+  app.scores = msg.score || app.scores;
   app.tapped = false;
-  resetFx();
+  app.fx = defaultFx();
   document.getElementById('countdown-overlay').classList.add('hidden');
-  document.getElementById('timing-ui').classList.remove('hidden');
-  document.getElementById('btn-lance').disabled = false;
+  document.getElementById('round-banner').classList.add('hidden');
+  updateScoreHud();
 }
 
 function onTimingResult(msg) {
   const tr = msg.timingResult;
   const my = app.role === 'host' ? tr.host : tr.guest;
-  const opp = app.role === 'host' ? tr.guest : tr.host;
-  app.fx.tier = my.tier;
-  playTierEffects(my.tier, opp.tier);
-  showVerdict(my.tier);
+  showVerdict(my.tier, null, null);
 }
 
-function onBattleResult(msg) {
-  app.phase = PHASE.RESULT;
-  const tr = msg.timingResult;
-  const my = app.role === 'host' ? tr.host : tr.guest;
-  const opp = app.role === 'host' ? tr.guest : tr.host;
-  const won = msg.battleResult.winner === app.role;
-  const draw = !msg.battleResult.winner;
+function onHitResult(msg) {
+  app.phase = PHASE.PASS_RESULT;
+  app.scores = msg.score || app.scores;
+  updateScoreHud();
 
-  document.getElementById('timing-ui').classList.add('hidden');
+  const hr = msg.hitResult;
+  const my = app.role === 'host' ? hr.host : hr.guest;
+  const opp = app.role === 'host' ? hr.guest : hr.host;
+
+  playHitEffects(my, opp, msg.knockdown);
+
+  const zoneLabel = my.foul ? 'FOUL!' : (ZONE_LABELS[my.hitZone] || '');
+  const pts = my.points > 0 ? `+${my.points}点` : (my.points < 0 ? `${my.points}点` : '');
+  showVerdict(my.timingResult, zoneLabel, pts);
+
+  if (msg.knockdown) {
+    setTimeout(() => showBigVerdict('KNOCKDOWN!'), 600);
+  }
+  if (my.foul) {
+    setTimeout(() => showBigVerdict(my.disqualified ? '失格!' : 'FOUL!'), 800);
+  }
+}
+
+function onMatchResult(msg) {
+  app.phase = PHASE.MATCH_RESULT;
+  const mr = msg.matchResult;
+  app.scores = mr.score || app.scores;
+  document.getElementById('battle-ui').classList.add('hidden');
+
+  const won = mr.winner === app.role;
+  const draw = !mr.winner;
+  const reasons = { knockdown: '落馬', foul: '反則', points: '得点', draw: '引き分け' };
 
   setTimeout(() => {
-    document.getElementById('result-title').textContent =
-      draw ? '引き分け' : (won ? '勝利！' : '敗北…');
-    document.getElementById('result-detail').textContent =
-      `あなた: ${my.tier} ／ 相手: ${opp.tier}`;
+    let title = draw ? '引き分け' : (won ? '勝利！' : '敗北…');
+    if (mr.reason === 'knockdown' && won) title = '落馬 — 勝利！';
+    if (mr.reason === 'foul' && !won) title = '反則 — 敗北';
+    document.getElementById('result-title').textContent = title;
+    document.getElementById('result-detail').textContent = reasons[mr.reason] || '';
+    document.getElementById('result-score').textContent =
+      `YOU ${myScore()} — FOE ${oppScore()}`;
     document.getElementById('result-overlay').classList.remove('hidden');
     document.getElementById('btn-rematch').disabled = false;
     app.rematchSent = false;
-    document.getElementById('rematch-status').classList.add('hidden');
-  }, 1200);
+  }, 1500);
 }
 
 function onRematchState(msg) {
@@ -306,69 +309,80 @@ function onRematchState(msg) {
   const opp = app.role === 'host' ? msg.guestRematch : msg.hostRematch;
   const el = document.getElementById('rematch-status');
   el.classList.remove('hidden');
-  if (mine && opp) el.textContent = '再戦開始…';
-  else if (mine) el.textContent = '相手を待っています…';
-  else el.textContent = '';
+  el.textContent = (mine && opp) ? '再戦開始…' : (mine ? '相手を待っています…' : '');
 }
 
-function playTierEffects(myTier, oppTier) {
+function playHitEffects(my, opp, knockdown) {
   app.fx.playerLanceOut = true;
   app.fx.enemyLanceOut = true;
 
-  if (myTier === 'PERFECT') {
+  if (my.foul) {
+    showBigVerdict('FOUL!');
+    return;
+  }
+
+  if (my.timingResult === 'PERFECT' && my.points > 0) {
     app.fx.shake = 1;
     app.fx.slowMo = 0.35;
     app.fx.impactFlash = 1;
-    app.fx.impactColor = 'rgba(255,230,80,0.95)';
-    app.fx.lanceBreak = true;
+    app.fx.impactColor = 'rgba(255,230,60,0.95)';
     app.fx.crowdCheer = 1;
-    app.fx.enemyKnock = 1;
-    setTimeout(() => { app.fx.slowMo = 1; }, 800);
-  } else if (myTier === 'GOOD') {
-    app.fx.impactFlash = 0.55;
-    app.fx.impactColor = 'rgba(255,180,80,0.7)';
-    app.fx.shake = 0.35;
-    app.fx.enemyKnock = 0.4;
-  } else if (myTier === 'EARLY' || myTier === 'LATE') {
+    if (my.lanceBreak) app.fx.playerLanceBroken = true;
+    if (my.knockdown || (knockdown && knockdown !== app.role)) {
+      app.fx.enemyKnock = 1;
+      app.fx.enemyUnhorsed = true;
+    } else {
+      app.fx.enemyKnock = 0.7;
+    }
+    setTimeout(() => { app.fx.slowMo = 1; }, 900);
+  } else if (my.timingResult === 'GOOD' && my.points > 0) {
+    app.fx.impactFlash = 0.5;
+    app.fx.impactColor = 'rgba(255,180,80,0.65)';
+    app.fx.shake = 0.3;
+    app.fx.enemyKnock = 0.35;
+    if (my.lanceBreak) app.fx.playerLanceBroken = true;
+  } else if (my.points > 0) {
     app.fx.impactFlash = 0.2;
-    app.fx.impactColor = 'rgba(200,200,200,0.4)';
-  } else {
-    app.fx.playerLanceOut = false;
-    app.fx.enemyLanceOut = false;
+    app.fx.impactColor = 'rgba(200,200,200,0.35)';
   }
 
-  if (oppTier === 'PERFECT' && myTier !== 'PERFECT') {
-    app.fx.playerKnock = 0.8;
+  if (knockdown === app.role) {
+    app.fx.playerUnhorsed = true;
+    app.fx.playerKnock = 1;
   }
 }
 
-function showVerdict(tier) {
+function showVerdict(tier, zone, pts) {
   const el = document.getElementById('verdict-display');
-  const text = document.getElementById('verdict-text');
   const labels = {
-    PERFECT: 'PERFECT!',
-    GOOD: 'HIT!',
-    EARLY: 'EARLY…',
-    LATE: 'LATE…',
-    MISS: 'MISS',
+    PERFECT: 'PERFECT!', GOOD: 'HIT!', EARLY: 'EARLY…', LATE: 'LATE…', MISS: 'MISS',
   };
-  text.textContent = labels[tier] || tier;
-  text.className = `tier-${tier}`;
+  document.getElementById('verdict-text').textContent = labels[tier] || tier;
+  document.getElementById('verdict-text').className = `tier-${tier}`;
+  document.getElementById('hit-zone-text').textContent = zone || '';
+  document.getElementById('points-text').textContent = pts || '';
+  el.classList.remove('hidden');
+  setTimeout(() => el.classList.add('hidden'), 2200);
+}
+
+function showBigVerdict(text) {
+  const el = document.getElementById('verdict-display');
+  document.getElementById('verdict-text').textContent = text;
+  document.getElementById('verdict-text').className = 'tier-big';
+  document.getElementById('hit-zone-text').textContent = '';
+  document.getElementById('points-text').textContent = '';
   el.classList.remove('hidden');
   setTimeout(() => el.classList.add('hidden'), 2000);
 }
 
 // ── Game loop ─────────────────────────────────────────
-let lastFrame = 0;
-
 function startGameLoop() {
   if (rafId) return;
-  lastFrame = performance.now();
+  let last = performance.now();
   const tick = (now) => {
     rafId = requestAnimationFrame(tick);
-    const dt = Math.min(50, now - lastFrame);
-    lastFrame = now;
-    updateFrame(dt);
+    updateFrame(now - last);
+    last = now;
     drawFrame(now);
   };
   rafId = requestAnimationFrame(tick);
@@ -380,70 +394,60 @@ function stopGameLoop() {
 }
 
 function updateFrame(dt) {
-  const scale = app.fx.slowMo;
-  const scaledDt = dt * scale;
-
   if (app.phase === PHASE.COUNTDOWN) {
     const left = Math.max(0, app.countdownEndsAt - Date.now());
     const num = Math.ceil(left / 1000);
     const el = document.getElementById('countdown-num');
     el.textContent = num > 0 ? String(num) : 'GO!';
-    if (num <= 0) el.classList.add('go');
+    el.classList.toggle('go', num <= 0);
   }
 
   if (app.phase === PHASE.CHARGE && app.matchStartTime) {
-    const now = Date.now();
-    const cursor = Sim.getTimingCursor(now, app.matchStartTime);
-    const cursorEl = document.getElementById('timing-cursor');
-    if (cursorEl) cursorEl.style.left = `${cursor * 100}%`;
+    const cursor = Sim.getTimingCursor(Date.now(), app.matchStartTime);
+    const cur = document.getElementById('timing-cursor');
+    if (cur) cur.style.left = `${cursor * 100}%`;
   }
 
-  if (app.fx.shake > 0) app.fx.shake *= 0.92;
-  if (app.fx.impactFlash > 0) app.fx.impactFlash *= 0.9;
-  if (app.fx.crowdCheer > 0) app.fx.crowdCheer *= 0.97;
-  if (app.fx.enemyKnock > 0 && app.fx.tier) app.fx.enemyKnock *= 0.95;
-  if (app.fx.playerKnock > 0) app.fx.playerKnock *= 0.95;
+  if (app.fx.shake > 0) app.fx.shake *= 0.9;
+  if (app.fx.impactFlash > 0) app.fx.impactFlash *= 0.88;
+  if (app.fx.crowdCheer > 0) app.fx.crowdCheer *= 0.96;
 }
 
 function drawFrame(now) {
   if (!renderer) return;
-
   let progress = 0;
-  if (app.matchStartTime && (app.phase === PHASE.CHARGE || app.phase === PHASE.RESULT)) {
+  if (app.matchStartTime && (app.phase === PHASE.CHARGE || app.phase === PHASE.PASS_RESULT)) {
     progress = Sim.getChargeProgress(now, app.matchStartTime);
   }
 
-  const playerPos = Sim.getPlayerPos(Math.min(progress, 1));
-  const enemyPos = Sim.getEnemyPos(Math.min(progress, 1));
-
   renderer.render({
-    playerPos,
-    enemyPos,
+    playerPos: Sim.getPlayerPos(Math.min(progress, 1)),
+    enemyPos: Sim.getEnemyPos(Math.min(progress, 1)),
+    playerAim: app.myAim,
+    enemyAim: app.oppAim,
     shake: app.fx.shake,
     impactFlash: app.fx.impactFlash,
     impactColor: app.fx.impactColor,
-    lanceBreak: app.fx.lanceBreak,
     crowdCheer: app.fx.crowdCheer,
-    playerLanceOut: app.fx.playerLanceOut || progress > 0.75,
-    enemyLanceOut: app.fx.enemyLanceOut || progress > 0.75,
+    playerLanceOut: app.fx.playerLanceOut || progress > 0.7,
+    enemyLanceOut: app.fx.enemyLanceOut || progress > 0.7,
+    playerLanceBroken: app.fx.playerLanceBroken,
+    enemyLanceBroken: app.fx.enemyLanceBroken,
     playerKnock: app.fx.playerKnock,
     enemyKnock: app.fx.enemyKnock,
+    playerUnhorsed: app.fx.playerUnhorsed,
+    enemyUnhorsed: app.fx.enemyUnhorsed,
   });
 }
 
-// ── LANCE! tap ────────────────────────────────────────
 function onLanceTap() {
   if (app.phase !== PHASE.CHARGE || app.tapped || !app.matchStartTime) return;
   app.tapped = true;
-  const tapTiming = Sim.getTimingCursor(Date.now(), app.matchStartTime);
-  send('set_tap', { tapTiming });
+  const lanceTiming = Sim.getTimingCursor(Date.now(), app.matchStartTime);
+  send('set_lance_timing', { lanceTiming });
   document.getElementById('btn-lance').disabled = true;
   document.getElementById('btn-lance').classList.add('pressed');
-
-  const preview = Sim.evaluateTap(tapTiming);
-  if (preview.tier === 'PERFECT' || preview.tier === 'GOOD') {
-    app.fx.playerLanceOut = true;
-  }
+  app.fx.playerLanceOut = true;
 }
 
 // ── Init ──────────────────────────────────────────────
@@ -476,14 +480,17 @@ document.getElementById('btn-ready').addEventListener('click', () => {
   send('set_ready', { ready: app.myReady });
 });
 
+document.querySelectorAll('.aim-btn').forEach((btn) => {
+  btn.addEventListener('click', () => setAim(btn.dataset.aim));
+});
+
 document.getElementById('btn-lance').addEventListener('pointerdown', (e) => {
   e.preventDefault();
   onLanceTap();
 });
 
 document.getElementById('btn-leave').addEventListener('click', () => {
-  send('leave_room');
-  resetToLobby();
+  send('leave_room'); resetToLobby();
 });
 
 document.getElementById('btn-rematch').addEventListener('click', () => {
@@ -491,19 +498,13 @@ document.getElementById('btn-rematch').addEventListener('click', () => {
   app.rematchSent = true;
   document.getElementById('btn-rematch').disabled = true;
   document.getElementById('result-overlay').classList.add('hidden');
-  document.getElementById('btn-lance').classList.remove('pressed');
   send('rematch_request', { accept: true });
-  onRematchState({
-    hostRematch: app.role === 'host',
-    guestRematch: app.role === 'guest',
-  });
+  onRematchState({ hostRematch: app.role === 'host', guestRematch: app.role === 'guest' });
 });
 
 document.getElementById('btn-back-lobby').addEventListener('click', () => {
-  send('leave_room');
-  resetToLobby();
+  send('leave_room'); resetToLobby();
 });
 
 window.addEventListener('resize', () => renderer?.resize());
-
 connect();

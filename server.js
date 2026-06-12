@@ -5,10 +5,12 @@ const path = require('path');
 const crypto = require('crypto');
 
 const JOUST_CONSTANTS = require('./shared/constants');
-const { resolveBattle } = require('./shared/sim');
+const { resolvePass, resolveMatchWinner } = require('./shared/sim');
 
 const PORT = process.env.PORT || 3000;
-const { COUNTDOWN_MS, CHARGE_MS, RESULT_MS } = JOUST_CONSTANTS;
+const {
+  ROUNDS, COUNTDOWN_MS, CHARGE_MS, PASS_RESULT_MS, MATCH_RESULT_MS,
+} = JOUST_CONSTANTS;
 
 const app = express();
 const server = http.createServer(app);
@@ -42,7 +44,8 @@ function createPlayer(ws, name) {
     name,
     ready: false,
     rematchRequest: false,
-    tapTiming: null,
+    selectedAimHeight: 'MID',
+    lanceTiming: null,
   };
 }
 
@@ -59,26 +62,44 @@ function broadcastRoom(room, type, payload = {}, excludeWs = null) {
 }
 
 function clearRoomTimers(room) {
-  for (const key of ['countdownTimer', 'chargeTimer', 'resultTimer']) {
+  for (const key of ['countdownTimer', 'chargeTimer', 'passTimer', 'matchTimer']) {
     if (room[key]) clearTimeout(room[key]);
     room[key] = null;
   }
+}
+
+function scoreSnapshot(room) {
+  return { host: room.hostScore, guest: room.guestScore };
 }
 
 function waitingSnapshot(room) {
   return {
     host: room.host ? { name: room.host.name, ready: room.host.ready } : null,
     guest: room.guest ? { name: room.guest.name, ready: room.guest.ready } : null,
+    score: scoreSnapshot(room),
   };
+}
+
+function resetPlayersPass(room) {
+  for (const p of [room.host, room.guest].filter(Boolean)) {
+    p.selectedAimHeight = 'MID';
+    p.lanceTiming = null;
+  }
 }
 
 function enterWaitingPhase(room) {
   room.phase = 'waiting';
+  room.roundNumber = 0;
+  room.hostScore = 0;
+  room.guestScore = 0;
   room.matchStartTime = null;
+  room.knockdown = null;
+  room.foul = null;
   for (const p of [room.host, room.guest].filter(Boolean)) {
     p.ready = false;
     p.rematchRequest = false;
-    p.tapTiming = null;
+    p.selectedAimHeight = 'MID';
+    p.lanceTiming = null;
   }
   broadcastRoom(room, 'phase_waiting', waitingSnapshot(room));
 }
@@ -87,11 +108,27 @@ function bothReady(room) {
   return room.host?.ready && room.guest?.ready;
 }
 
-function startCountdown(room) {
-  if (!bothReady(room)) return;
+function startMatch(room) {
+  room.roundNumber = 1;
+  room.hostScore = 0;
+  room.guestScore = 0;
+  room.knockdown = null;
+  room.foul = null;
+  resetPlayersPass(room);
+  startRoundCountdown(room);
+}
+
+function startRoundCountdown(room) {
+  if (!room.host || !room.guest) return;
   room.phase = 'countdown';
+  resetPlayersPass(room);
   const endsAt = Date.now() + COUNTDOWN_MS;
-  broadcastRoom(room, 'match_countdown', { endsAt, duration: COUNTDOWN_MS });
+  broadcastRoom(room, 'round_countdown', {
+    roundNumber: room.roundNumber,
+    endsAt,
+    duration: COUNTDOWN_MS,
+    score: scoreSnapshot(room),
+  });
   room.countdownTimer = setTimeout(() => beginCharge(room), COUNTDOWN_MS);
 }
 
@@ -99,33 +136,91 @@ function beginCharge(room) {
   if (!room.host || !room.guest) return;
   room.phase = 'charge';
   room.matchStartTime = Date.now();
-  room.host.tapTiming = null;
-  room.guest.tapTiming = null;
+  room.host.lanceTiming = null;
+  room.guest.lanceTiming = null;
 
-  broadcastRoom(room, 'match_start', {
+  broadcastRoom(room, 'round_start', {
+    roundNumber: room.roundNumber,
     matchStartTime: room.matchStartTime,
     chargeDuration: CHARGE_MS,
+    score: scoreSnapshot(room),
   });
 
-  room.chargeTimer = setTimeout(() => resolveMatch(room), CHARGE_MS);
+  room.chargeTimer = setTimeout(() => resolvePassPhase(room), CHARGE_MS);
 }
 
-function resolveMatch(room) {
+function resolvePassPhase(room) {
   if (!room.host || !room.guest) return;
-  room.phase = 'result';
+  room.phase = 'pass_result';
 
-  const { timingResult, battleResult } = resolveBattle(room.host, room.guest);
+  const pass = resolvePass(room.host, room.guest, room.roundNumber, room.code);
+  room.hostScore += pass.hitResult.host.points;
+  room.guestScore += pass.hitResult.guest.points;
+  if (pass.knockdown) room.knockdown = pass.knockdown;
+  if (pass.foul) room.foul = pass.foul;
 
-  broadcastRoom(room, 'timing_result', { timingResult });
-  broadcastRoom(room, 'battle_result', { battleResult, timingResult });
+  const score = scoreSnapshot(room);
 
-  room.resultTimer = setTimeout(() => {
+  broadcastRoom(room, 'timing_result', {
+    roundNumber: room.roundNumber,
+    timingResult: pass.timingResult,
+  });
+
+  broadcastRoom(room, 'hit_result', {
+    roundNumber: room.roundNumber,
+    hitResult: pass.hitResult,
+    knockdown: pass.knockdown,
+    foul: pass.foul,
+    score,
+  });
+
+  const matchOver = pass.knockdown || pass.foul
+    || room.roundNumber >= ROUNDS;
+
+  if (matchOver) {
+    finishMatch(room, pass);
+    return;
+  }
+
+  room.passTimer = setTimeout(() => {
+    room.roundNumber += 1;
+    startRoundCountdown(room);
+  }, PASS_RESULT_MS);
+}
+
+function finishMatch(room, lastPass) {
+  room.phase = 'match_result';
+  const { winner, reason } = resolveMatchWinner(
+    room.hostScore,
+    room.guestScore,
+    room.knockdown,
+    room.foul
+  );
+
+  broadcastRoom(room, 'match_result', {
+    matchResult: {
+      winner,
+      reason,
+      score: scoreSnapshot(room),
+      knockdown: room.knockdown,
+      foul: room.foul,
+      rounds: ROUNDS,
+    },
+    hitResult: lastPass?.hitResult,
+    timingResult: lastPass?.timingResult,
+    roundNumber: room.roundNumber,
+  });
+
+  room.matchTimer = setTimeout(() => {
     room.phase = 'finished';
     broadcastRoom(room, 'phase_finished', waitingSnapshot(room));
-  }, RESULT_MS);
+  }, MATCH_RESULT_MS);
 }
 
 function startRematch(room) {
+  for (const p of [room.host, room.guest].filter(Boolean)) {
+    p.rematchRequest = false;
+  }
   enterWaitingPhase(room);
 }
 
@@ -171,10 +266,16 @@ wss.on('connection', (ws) => {
           host: createPlayer(ws, msg.name || '騎士A'),
           guest: null,
           phase: 'lobby',
+          roundNumber: 0,
+          hostScore: 0,
+          guestScore: 0,
           matchStartTime: null,
+          knockdown: null,
+          foul: null,
           countdownTimer: null,
           chargeTimer: null,
-          resultTimer: null,
+          passTimer: null,
+          matchTimer: null,
         });
         role = 'host';
         roomCode = code;
@@ -208,19 +309,32 @@ wss.on('connection', (ws) => {
         const player = role === 'host' ? room.host : room.guest;
         if (!player) return;
         player.ready = Boolean(msg.ready);
-        player.rematchRequest = false;
         broadcastRoom(room, 'ready_update', { role, ready: player.ready, ...waitingSnapshot(room) });
-        if (bothReady(room)) startCountdown(room);
+        if (bothReady(room)) startMatch(room);
         break;
       }
 
-      case 'set_tap': {
+      case 'set_aim': {
+        const room = rooms.get(roomCode);
+        if (!room || (room.phase !== 'countdown' && room.phase !== 'charge')) return;
+        const player = role === 'host' ? room.host : room.guest;
+        if (!player) return;
+        const aim = msg.selectedAimHeight;
+        if (!['HIGH', 'MID', 'LOW'].includes(aim)) return;
+        player.selectedAimHeight = aim;
+        broadcastRoom(room, 'aim_update', { role, selectedAimHeight: aim }, player.ws);
+        break;
+      }
+
+      case 'set_lance_timing': {
         const room = rooms.get(roomCode);
         if (!room || room.phase !== 'charge') return;
         const player = role === 'host' ? room.host : room.guest;
-        if (!player || player.tapTiming != null) return;
-        if (typeof msg.tapTiming === 'number') {
-          player.tapTiming = clamp(msg.tapTiming, 0, 1);
+        if (!player || player.lanceTiming != null) return;
+        if (typeof msg.lanceTiming === 'number') {
+          player.lanceTiming = clamp(msg.lanceTiming, 0, 1);
+        } else if (typeof msg.tapTiming === 'number') {
+          player.lanceTiming = clamp(msg.tapTiming, 0, 1);
         }
         break;
       }
