@@ -1,5 +1,5 @@
 /**
- * 決定論シミュレーション — 槍の高さのみで判定
+ * 決定論シミュレーション — タイミングバー・騎士移動
  */
 (function (root, factory) {
   if (typeof module !== 'undefined' && module.exports) {
@@ -19,48 +19,52 @@
     return Math.max(0, Math.min(1, (nowMs - matchStartTime) / CHARGE_MS));
   }
 
-  /** 自分=左へ突進、相手=右から突進 */
-  function getMyScreenX(progress) {
+  /** タイミングバー上のカーソル位置 0〜1（両クライアント同一） */
+  function getTimingCursor(nowMs, matchStartTime) {
+    const elapsed = nowMs - matchStartTime;
+    const wave = Math.sin((elapsed / C.CURSOR_PERIOD_MS) * Math.PI * 2);
+    return 0.5 + 0.42 * wave;
+  }
+
+  /** 縦画面2.5D: プレイヤー左レーン（下→中央奥） */
+  function getPlayerPos(progress) {
     const t = easeCharge(progress);
-    return 0.12 + (0.44 - 0.12) * t;
+    return { x: 0.28, y: 0.88 - t * 0.42, scale: 0.85 + t * 0.35 };
   }
 
-  function getOppScreenX(progress) {
+  /** 敵右レーン（上→中央手前） */
+  function getEnemyPos(progress) {
     const t = easeCharge(progress);
-    return 0.88 - (0.88 - 0.56) * t;
+    return { x: 0.72, y: 0.12 + t * 0.42, scale: 0.55 + t * 0.35 };
   }
 
-  function getLanceTier(height) {
-    const h = Math.max(0, Math.min(1, height));
-    if (h >= C.PERFECT_MIN && h <= C.PERFECT_MAX) return 'PERFECT';
-    if (h >= C.GOOD_MIN && h <= C.GOOD_MAX) return 'GOOD';
-    return 'MISS';
+  function evaluateTap(tapTiming) {
+    if (tapTiming == null || typeof tapTiming !== 'number') {
+      return { tier: 'MISS', score: 0 };
+    }
+    const pos = Math.max(0, Math.min(1, tapTiming));
+    const dist = Math.abs(pos - 0.5);
+    if (dist <= C.PERFECT_RADIUS) return { tier: 'PERFECT', score: 4 };
+    if (dist <= C.GOOD_RADIUS) return { tier: 'GOOD', score: 3 };
+    if (dist <= C.GRAZE_RADIUS) {
+      return { tier: pos < 0.5 ? 'EARLY' : 'LATE', score: 1 };
+    }
+    return { tier: 'MISS', score: 0 };
   }
 
-  function tierScore(tier) {
-    if (tier === 'PERFECT') return 3;
-    if (tier === 'GOOD') return 2;
-    return 0;
-  }
-
-  function resolveBout(host, guest) {
-    const hostTier = getLanceTier(host.lanceHeight);
-    const guestTier = getLanceTier(guest.lanceHeight);
-    const hostScore = tierScore(hostTier);
-    const guestScore = tierScore(guestTier);
-
+  function resolveBattle(host, guest) {
+    const hostResult = evaluateTap(host.tapTiming);
+    const guestResult = evaluateTap(guest.tapTiming);
     let winner = null;
-    if (hostScore > guestScore) winner = 'host';
-    else if (guestScore > hostScore) winner = 'guest';
+    if (hostResult.score > guestResult.score) winner = 'host';
+    else if (guestResult.score > hostResult.score) winner = 'guest';
 
     return {
-      hostTier,
-      guestTier,
-      hostLanceHeight: host.lanceHeight,
-      guestLanceHeight: guest.lanceHeight,
-      winner,
-      hostUnhorsed: guestTier === 'PERFECT',
-      guestUnhorsed: hostTier === 'PERFECT',
+      timingResult: {
+        host: { tier: hostResult.tier, tapTiming: host.tapTiming },
+        guest: { tier: guestResult.tier, tapTiming: guest.tapTiming },
+      },
+      battleResult: { winner, hostScore: hostResult.score, guestScore: guestResult.score },
     };
   }
 
@@ -68,9 +72,10 @@
     CHARGE_MS,
     easeCharge,
     getChargeProgress,
-    getMyScreenX,
-    getOppScreenX,
-    getLanceTier,
-    resolveBout,
+    getTimingCursor,
+    getPlayerPos,
+    getEnemyPos,
+    evaluateTap,
+    resolveBattle,
   };
 }));

@@ -1,4 +1,4 @@
-// 馬上槍試合 — オンライン1vs1
+// 馬上槍試合 — 縦画面タイミングゲーム
 
 const PHASE = {
   LOBBY: 'lobby',
@@ -10,10 +10,9 @@ const PHASE = {
 };
 
 const Sim = JoustSim;
-const LANCE_SEND_INTERVAL = 100;
+const C = JOUST_CONSTANTS;
 
 const canvas = document.getElementById('game-canvas');
-const gameScreen = document.getElementById('screen-game');
 let renderer = null;
 let rafId = null;
 
@@ -27,13 +26,22 @@ const app = {
   myReady: false,
   oppReady: false,
   matchStartTime: 0,
-  lanceHeight: 0.5,
-  oppLanceHeight: 0.5,
+  tapped: false,
   countdownEndsAt: 0,
-  lastLanceSend: 0,
-  impactFlash: 0,
   rematchSent: false,
-  drag: { active: false, id: null, lastY: 0 },
+  fx: {
+    shake: 0,
+    impactFlash: 0,
+    impactColor: null,
+    lanceBreak: false,
+    crowdCheer: 0,
+    slowMo: 1,
+    playerLanceOut: false,
+    enemyLanceOut: false,
+    playerKnock: 0,
+    enemyKnock: 0,
+    tier: null,
+  },
 };
 
 // ── WebSocket ───────────────────────────────────────────
@@ -97,17 +105,14 @@ function handleMessage(msg) {
     case 'match_start':
       onMatchStart(msg);
       break;
-    case 'lance_update':
-      if (msg.role !== app.role) app.oppLanceHeight = msg.lanceHeight;
+    case 'timing_result':
+      onTimingResult(msg);
       break;
-    case 'impact_result':
-      onImpactResult(msg);
-      break;
-    case 'match_result':
-      onMatchResult(msg);
+    case 'battle_result':
+      onBattleResult(msg);
       break;
     case 'phase_finished':
-      onPhaseFinished();
+      app.phase = PHASE.FINISHED;
       break;
     case 'rematch_state':
       onRematchState(msg);
@@ -153,7 +158,7 @@ function showLobbyWaiting(code) {
   const wait = document.createElement('p');
   wait.className = 'hint';
   wait.id = 'waiting-code';
-  wait.textContent = `コード: ${code} — 相手を待っています…`;
+  wait.textContent = `コード: ${code}`;
   document.querySelector('.lobby-card').appendChild(wait);
 }
 
@@ -163,22 +168,31 @@ function resetToLobby() {
   app.role = null;
   app.roomCode = null;
   app.rematchSent = false;
+  resetFx();
   document.getElementById('lobby-menu')?.classList.remove('hidden');
   document.getElementById('lobby-join')?.classList.add('hidden');
   document.getElementById('waiting-code')?.remove();
-  hideAllOverlays();
+  hideOverlays();
   showScreen('lobby');
 }
 
-function hideAllOverlays() {
+function hideOverlays() {
   document.getElementById('ready-bar').classList.add('hidden');
-  document.getElementById('lance-gauge').classList.add('hidden');
-  document.getElementById('drag-hint').classList.add('hidden');
+  document.getElementById('timing-ui').classList.add('hidden');
   document.getElementById('countdown-overlay').classList.add('hidden');
   document.getElementById('verdict-display').classList.add('hidden');
   document.getElementById('result-overlay').classList.add('hidden');
   document.getElementById('btn-ready').classList.remove('ready-on');
   document.getElementById('btn-ready').textContent = 'READY';
+  document.getElementById('btn-lance').disabled = false;
+}
+
+function resetFx() {
+  app.fx = {
+    shake: 0, impactFlash: 0, impactColor: null, lanceBreak: false,
+    crowdCheer: 0, slowMo: 1, playerLanceOut: false, enemyLanceOut: false,
+    playerKnock: 0, enemyKnock: 0, tier: null,
+  };
 }
 
 // ── Match flow ────────────────────────────────────────
@@ -193,7 +207,18 @@ function onPhaseWaiting(msg) {
   app.phase = PHASE.WAITING;
   app.myReady = false;
   app.oppReady = false;
-  app.lanceHeight = 0.5;
+  app.tapped = false;
+  resetFx();
+  parsePlayers(msg);
+  hideOverlays();
+  document.getElementById('ready-bar').classList.remove('hidden');
+  document.getElementById('result-overlay').classList.add('hidden');
+  document.getElementById('btn-lance').classList.remove('pressed');
+  updateReadyUI();
+  enterGameScreen();
+}
+
+function parsePlayers(msg) {
   if (msg.host) {
     if (app.role === 'host') {
       app.playerName = msg.host.name;
@@ -212,21 +237,10 @@ function onPhaseWaiting(msg) {
       app.oppReady = msg.guest.ready;
     }
   }
-  hideAllOverlays();
-  document.getElementById('ready-bar').classList.remove('hidden');
-  updateReadyUI();
-  enterGameScreen();
 }
 
 function onReadyUpdate(msg) {
-  if (msg.host) {
-    if (app.role === 'host') app.myReady = msg.host.ready;
-    else app.oppReady = msg.host.ready;
-  }
-  if (msg.guest) {
-    if (app.role === 'guest') app.myReady = msg.guest.ready;
-    else app.oppReady = msg.guest.ready;
-  }
+  parsePlayers(msg);
   updateReadyUI();
 }
 
@@ -235,7 +249,7 @@ function updateReadyUI() {
   btn.textContent = app.myReady ? 'READY ✓' : 'READY';
   btn.classList.toggle('ready-on', app.myReady);
   document.getElementById('opp-ready-hint').textContent =
-    app.oppReady ? '相手 READY — まもなく開始' : '相手の READY を待っています…';
+    app.oppReady ? 'まもなく開始…' : '相手の READY を待っています…';
 }
 
 function onMatchCountdown(msg) {
@@ -243,52 +257,48 @@ function onMatchCountdown(msg) {
   app.countdownEndsAt = msg.endsAt;
   document.getElementById('ready-bar').classList.add('hidden');
   document.getElementById('countdown-overlay').classList.remove('hidden');
+  document.getElementById('countdown-num').classList.remove('go');
 }
 
 function onMatchStart(msg) {
   app.phase = PHASE.CHARGE;
   app.matchStartTime = msg.matchStartTime;
-  app.lanceHeight = 0.5;
-  app.oppLanceHeight = 0.5;
+  app.tapped = false;
+  resetFx();
   document.getElementById('countdown-overlay').classList.add('hidden');
-  document.getElementById('lance-gauge').classList.remove('hidden');
-  document.getElementById('drag-hint').classList.remove('hidden');
-  updateGauge();
+  document.getElementById('timing-ui').classList.remove('hidden');
+  document.getElementById('btn-lance').disabled = false;
 }
 
-function onImpactResult(msg) {
-  app.impactFlash = 1;
-  const ir = msg.impactResult;
-  const myTier = app.role === 'host' ? ir.hostTier : ir.guestTier;
-  const oppTier = app.role === 'host' ? ir.guestTier : ir.hostTier;
-  showVerdict(myTier, oppTier);
+function onTimingResult(msg) {
+  const tr = msg.timingResult;
+  const my = app.role === 'host' ? tr.host : tr.guest;
+  const opp = app.role === 'host' ? tr.guest : tr.host;
+  app.fx.tier = my.tier;
+  playTierEffects(my.tier, opp.tier);
+  showVerdict(my.tier);
 }
 
-function onMatchResult(msg) {
+function onBattleResult(msg) {
   app.phase = PHASE.RESULT;
-  const ir = msg.impactResult;
-  const won = msg.winner === app.role;
-  const draw = !msg.winner;
-  const myTier = app.role === 'host' ? ir.hostTier : ir.guestTier;
-  const oppTier = app.role === 'host' ? ir.guestTier : ir.hostTier;
+  const tr = msg.timingResult;
+  const my = app.role === 'host' ? tr.host : tr.guest;
+  const opp = app.role === 'host' ? tr.guest : tr.host;
+  const won = msg.battleResult.winner === app.role;
+  const draw = !msg.battleResult.winner;
 
-  document.getElementById('drag-hint').classList.add('hidden');
-  document.getElementById('lance-gauge').classList.add('hidden');
+  document.getElementById('timing-ui').classList.add('hidden');
 
   setTimeout(() => {
     document.getElementById('result-title').textContent =
       draw ? '引き分け' : (won ? '勝利！' : '敗北…');
     document.getElementById('result-detail').textContent =
-      `あなた: ${myTier} ／ 相手: ${oppTier}`;
+      `あなた: ${my.tier} ／ 相手: ${opp.tier}`;
     document.getElementById('result-overlay').classList.remove('hidden');
     document.getElementById('btn-rematch').disabled = false;
     app.rematchSent = false;
     document.getElementById('rematch-status').classList.add('hidden');
-  }, 800);
-}
-
-function onPhaseFinished() {
-  app.phase = PHASE.FINISHED;
+  }, 1200);
 }
 
 function onRematchState(msg) {
@@ -301,22 +311,65 @@ function onRematchState(msg) {
   else el.textContent = '';
 }
 
-function showVerdict(myTier, oppTier) {
+function playTierEffects(myTier, oppTier) {
+  app.fx.playerLanceOut = true;
+  app.fx.enemyLanceOut = true;
+
+  if (myTier === 'PERFECT') {
+    app.fx.shake = 1;
+    app.fx.slowMo = 0.35;
+    app.fx.impactFlash = 1;
+    app.fx.impactColor = 'rgba(255,230,80,0.95)';
+    app.fx.lanceBreak = true;
+    app.fx.crowdCheer = 1;
+    app.fx.enemyKnock = 1;
+    setTimeout(() => { app.fx.slowMo = 1; }, 800);
+  } else if (myTier === 'GOOD') {
+    app.fx.impactFlash = 0.55;
+    app.fx.impactColor = 'rgba(255,180,80,0.7)';
+    app.fx.shake = 0.35;
+    app.fx.enemyKnock = 0.4;
+  } else if (myTier === 'EARLY' || myTier === 'LATE') {
+    app.fx.impactFlash = 0.2;
+    app.fx.impactColor = 'rgba(200,200,200,0.4)';
+  } else {
+    app.fx.playerLanceOut = false;
+    app.fx.enemyLanceOut = false;
+  }
+
+  if (oppTier === 'PERFECT' && myTier !== 'PERFECT') {
+    app.fx.playerKnock = 0.8;
+  }
+}
+
+function showVerdict(tier) {
   const el = document.getElementById('verdict-display');
   const text = document.getElementById('verdict-text');
-  text.textContent = myTier;
-  text.className = `tier-${myTier}`;
+  const labels = {
+    PERFECT: 'PERFECT!',
+    GOOD: 'HIT!',
+    EARLY: 'EARLY…',
+    LATE: 'LATE…',
+    MISS: 'MISS',
+  };
+  text.textContent = labels[tier] || tier;
+  text.className = `tier-${tier}`;
   el.classList.remove('hidden');
   setTimeout(() => el.classList.add('hidden'), 2000);
 }
 
 // ── Game loop ─────────────────────────────────────────
+let lastFrame = 0;
+
 function startGameLoop() {
   if (rafId) return;
-  const tick = () => {
+  lastFrame = performance.now();
+  const tick = (now) => {
     rafId = requestAnimationFrame(tick);
-    updateFrame();
-    drawFrame();
+    const dt = Math.min(50, now - lastFrame);
+    lastFrame = now;
+    updateFrame(dt);
+    drawFrame(now);
   };
   rafId = requestAnimationFrame(tick);
 }
@@ -326,83 +379,71 @@ function stopGameLoop() {
   rafId = null;
 }
 
-function updateFrame() {
+function updateFrame(dt) {
+  const scale = app.fx.slowMo;
+  const scaledDt = dt * scale;
+
   if (app.phase === PHASE.COUNTDOWN) {
     const left = Math.max(0, app.countdownEndsAt - Date.now());
     const num = Math.ceil(left / 1000);
-    document.getElementById('countdown-num').textContent = num > 0 ? String(num) : 'GO!';
-    if (num <= 0) {
-      document.getElementById('countdown-num').classList.add('go');
-    }
+    const el = document.getElementById('countdown-num');
+    el.textContent = num > 0 ? String(num) : 'GO!';
+    if (num <= 0) el.classList.add('go');
   }
 
-  if (app.phase === PHASE.CHARGE) {
+  if (app.phase === PHASE.CHARGE && app.matchStartTime) {
     const now = Date.now();
-    if (now - app.lastLanceSend >= LANCE_SEND_INTERVAL) {
-      app.lastLanceSend = now;
-      send('update_lance', { lanceHeight: app.lanceHeight });
-    }
-    updateGauge();
+    const cursor = Sim.getTimingCursor(now, app.matchStartTime);
+    const cursorEl = document.getElementById('timing-cursor');
+    if (cursorEl) cursorEl.style.left = `${cursor * 100}%`;
   }
 
-  if (app.impactFlash > 0) app.impactFlash *= 0.85;
+  if (app.fx.shake > 0) app.fx.shake *= 0.92;
+  if (app.fx.impactFlash > 0) app.fx.impactFlash *= 0.9;
+  if (app.fx.crowdCheer > 0) app.fx.crowdCheer *= 0.97;
+  if (app.fx.enemyKnock > 0 && app.fx.tier) app.fx.enemyKnock *= 0.95;
+  if (app.fx.playerKnock > 0) app.fx.playerKnock *= 0.95;
 }
 
-function drawFrame() {
+function drawFrame(now) {
   if (!renderer) return;
-  let myX = 0.12;
-  let oppX = 0.88;
 
-  if ((app.phase === PHASE.CHARGE || app.phase === PHASE.RESULT) && app.matchStartTime) {
-    const progress = Sim.getChargeProgress(Date.now(), app.matchStartTime);
-    myX = Sim.getMyScreenX(Math.min(progress, 1));
-    oppX = Sim.getOppScreenX(Math.min(progress, 1));
+  let progress = 0;
+  if (app.matchStartTime && (app.phase === PHASE.CHARGE || app.phase === PHASE.RESULT)) {
+    progress = Sim.getChargeProgress(now, app.matchStartTime);
   }
+
+  const playerPos = Sim.getPlayerPos(Math.min(progress, 1));
+  const enemyPos = Sim.getEnemyPos(Math.min(progress, 1));
 
   renderer.render({
-    myX,
-    oppX,
-    myLanceH: app.lanceHeight,
-    oppLanceH: app.oppLanceHeight,
-    impactFlash: app.impactFlash,
+    playerPos,
+    enemyPos,
+    shake: app.fx.shake,
+    impactFlash: app.fx.impactFlash,
+    impactColor: app.fx.impactColor,
+    lanceBreak: app.fx.lanceBreak,
+    crowdCheer: app.fx.crowdCheer,
+    playerLanceOut: app.fx.playerLanceOut || progress > 0.75,
+    enemyLanceOut: app.fx.enemyLanceOut || progress > 0.75,
+    playerKnock: app.fx.playerKnock,
+    enemyKnock: app.fx.enemyKnock,
   });
 }
 
-function updateGauge() {
-  const marker = document.getElementById('gauge-marker');
-  marker.style.top = `${(1 - app.lanceHeight) * 100}%`;
-}
+// ── LANCE! tap ────────────────────────────────────────
+function onLanceTap() {
+  if (app.phase !== PHASE.CHARGE || app.tapped || !app.matchStartTime) return;
+  app.tapped = true;
+  const tapTiming = Sim.getTimingCursor(Date.now(), app.matchStartTime);
+  send('set_tap', { tapTiming });
+  document.getElementById('btn-lance').disabled = true;
+  document.getElementById('btn-lance').classList.add('pressed');
 
-// ── Drag control (full screen) ────────────────────────
-function setupDrag() {
-  const sens = 0.004;
-
-  gameScreen.addEventListener('pointerdown', (e) => {
-    if (app.phase !== PHASE.CHARGE) return;
-    if (e.target.closest('button')) return;
-    app.drag.active = true;
-    app.drag.id = e.pointerId;
-    app.drag.lastY = e.clientY;
-    gameScreen.setPointerCapture(e.pointerId);
-  });
-
-  gameScreen.addEventListener('pointermove', (e) => {
-    if (!app.drag.active || e.pointerId !== app.drag.id) return;
-    const dy = e.clientY - app.drag.lastY;
-    app.drag.lastY = e.clientY;
-    app.lanceHeight = clamp(app.lanceHeight - dy * sens, 0.05, 0.95);
-  });
-
-  function endDrag(e) {
-    if (e.pointerId !== app.drag.id) return;
-    app.drag.active = false;
+  const preview = Sim.evaluateTap(tapTiming);
+  if (preview.tier === 'PERFECT' || preview.tier === 'GOOD') {
+    app.fx.playerLanceOut = true;
   }
-  gameScreen.addEventListener('pointerup', endDrag);
-  gameScreen.addEventListener('pointercancel', endDrag);
-}
-
-function clamp(v, min, max) {
-  return Math.max(min, Math.min(max, v));
 }
 
 // ── Init ──────────────────────────────────────────────
@@ -429,22 +470,15 @@ document.getElementById('btn-join').addEventListener('click', () => {
 });
 
 document.getElementById('btn-ready').addEventListener('click', () => {
-  if (app.phase !== PHASE.WAITING && app.phase !== PHASE.FINISHED) return;
+  if (app.phase !== PHASE.WAITING) return;
   app.myReady = !app.myReady;
   updateReadyUI();
   send('set_ready', { ready: app.myReady });
 });
 
-document.getElementById('btn-rematch').addEventListener('click', () => {
-  if (app.rematchSent) return;
-  app.rematchSent = true;
-  document.getElementById('btn-rematch').disabled = true;
-  document.getElementById('result-overlay').classList.add('hidden');
-  send('rematch_request', { accept: true });
-  onRematchState({
-    hostRematch: app.role === 'host',
-    guestRematch: app.role === 'guest',
-  });
+document.getElementById('btn-lance').addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  onLanceTap();
 });
 
 document.getElementById('btn-leave').addEventListener('click', () => {
@@ -452,22 +486,24 @@ document.getElementById('btn-leave').addEventListener('click', () => {
   resetToLobby();
 });
 
+document.getElementById('btn-rematch').addEventListener('click', () => {
+  if (app.rematchSent) return;
+  app.rematchSent = true;
+  document.getElementById('btn-rematch').disabled = true;
+  document.getElementById('result-overlay').classList.add('hidden');
+  document.getElementById('btn-lance').classList.remove('pressed');
+  send('rematch_request', { accept: true });
+  onRematchState({
+    hostRematch: app.role === 'host',
+    guestRematch: app.role === 'guest',
+  });
+});
+
 document.getElementById('btn-back-lobby').addEventListener('click', () => {
   send('leave_room');
   resetToLobby();
 });
 
-function checkOrientation() {
-  const hint = document.getElementById('rotate-hint');
-  hint.classList.toggle('hidden', window.innerWidth > window.innerHeight);
-}
+window.addEventListener('resize', () => renderer?.resize());
 
-window.addEventListener('resize', () => {
-  checkOrientation();
-  renderer?.resize();
-});
-window.addEventListener('orientationchange', checkOrientation);
-
-setupDrag();
-checkOrientation();
 connect();

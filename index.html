@@ -3,7 +3,6 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <meta name="screen-orientation" content="landscape">
   <title>馬上槍試合</title>
   <link rel="stylesheet" href="style.css">
 </head>
@@ -12,7 +11,7 @@
   <div id="screen-lobby" class="screen active">
     <div class="lobby-card">
       <h1>馬上槍試合</h1>
-      <p class="subtitle">オンライン1vs1 — 横画面でプレイ</p>
+      <p class="subtitle">タイミングで槍を突け！</p>
 
       <div id="lobby-menu">
         <input type="text" id="player-name" placeholder="名前" maxlength="12">
@@ -31,7 +30,7 @@
     </div>
   </div>
 
-  <!-- Game (1画面完結) -->
+  <!-- Game -->
   <div id="screen-game" class="screen">
     <canvas id="game-canvas"></canvas>
 
@@ -41,7 +40,7 @@
       </div>
 
       <div id="verdict-display" class="verdict-display hidden">
-        <span id="verdict-text">PERFECT</span>
+        <span id="verdict-text">PERFECT!</span>
       </div>
 
       <div id="result-overlay" class="result-overlay hidden">
@@ -53,24 +52,20 @@
       </div>
 
       <div id="ready-bar" class="ready-bar hidden">
-        <button id="btn-leave" class="text-btn leave-btn">退出</button>
+        <button id="btn-leave" class="text-btn">退出</button>
         <p id="opp-ready-hint">相手を待っています…</p>
         <button id="btn-ready" class="action-btn ready-btn">READY</button>
       </div>
     </div>
 
-    <!-- 槍の高さゲージ -->
-    <div id="lance-gauge" class="lance-gauge hidden">
-      <div class="gauge-zone zone-high">HIGH</div>
-      <div class="gauge-zone zone-perfect">PERFECT</div>
-      <div class="gauge-zone zone-low">LOW</div>
-      <div id="gauge-marker" class="gauge-marker"></div>
-    </div>
-
-    <div id="drag-hint" class="drag-hint hidden">上下にドラッグで槍の高さ</div>
-
-    <div id="rotate-hint" class="rotate-hint hidden">
-      <p>端末を<strong>横向き</strong>にしてください</p>
+    <div id="timing-ui" class="timing-ui hidden">
+      <div class="timing-bar">
+        <div class="timing-zone zone-graze zone-left"></div>
+        <div class="timing-zone zone-perfect">PERFECT</div>
+        <div class="timing-zone zone-graze zone-right"></div>
+        <div id="timing-cursor" class="timing-cursor"></div>
+      </div>
+      <button id="btn-lance" class="lance-btn">LANCE!</button>
     </div>
   </div>
 

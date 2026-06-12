@@ -2,12 +2,12 @@
 (function (global) {
   const JOUST_CONSTANTS = {
     COUNTDOWN_MS: 3000,
-    CHARGE_MS: 5000,
-    RESULT_MS: 3500,
-    PERFECT_MIN: 0.42,
-    PERFECT_MAX: 0.58,
-    GOOD_MIN: 0.28,
-    GOOD_MAX: 0.72,
+    CHARGE_MS: 6500,
+    RESULT_MS: 4000,
+    CURSOR_PERIOD_MS: 900,
+    PERFECT_RADIUS: 0.08,
+    GOOD_RADIUS: 0.16,
+    GRAZE_RADIUS: 0.28,
   };
 
   if (typeof module !== 'undefined') module.exports = JOUST_CONSTANTS;

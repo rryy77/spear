@@ -5,7 +5,7 @@ const path = require('path');
 const crypto = require('crypto');
 
 const JOUST_CONSTANTS = require('./shared/constants');
-const { resolveBout } = require('./shared/sim');
+const { resolveBattle } = require('./shared/sim');
 
 const PORT = process.env.PORT || 3000;
 const { COUNTDOWN_MS, CHARGE_MS, RESULT_MS } = JOUST_CONSTANTS;
@@ -42,7 +42,7 @@ function createPlayer(ws, name) {
     name,
     ready: false,
     rematchRequest: false,
-    lanceHeight: 0.5,
+    tapTiming: null,
   };
 }
 
@@ -75,15 +75,10 @@ function waitingSnapshot(room) {
 function enterWaitingPhase(room) {
   room.phase = 'waiting';
   room.matchStartTime = null;
-  if (room.host) {
-    room.host.ready = false;
-    room.host.rematchRequest = false;
-    room.host.lanceHeight = 0.5;
-  }
-  if (room.guest) {
-    room.guest.ready = false;
-    room.guest.rematchRequest = false;
-    room.guest.lanceHeight = 0.5;
+  for (const p of [room.host, room.guest].filter(Boolean)) {
+    p.ready = false;
+    p.rematchRequest = false;
+    p.tapTiming = null;
   }
   broadcastRoom(room, 'phase_waiting', waitingSnapshot(room));
 }
@@ -104,8 +99,8 @@ function beginCharge(room) {
   if (!room.host || !room.guest) return;
   room.phase = 'charge';
   room.matchStartTime = Date.now();
-  room.host.lanceHeight = 0.5;
-  room.guest.lanceHeight = 0.5;
+  room.host.tapTiming = null;
+  room.guest.tapTiming = null;
 
   broadcastRoom(room, 'match_start', {
     matchStartTime: room.matchStartTime,
@@ -119,14 +114,10 @@ function resolveMatch(room) {
   if (!room.host || !room.guest) return;
   room.phase = 'result';
 
-  const impactResult = resolveBout(room.host, room.guest);
+  const { timingResult, battleResult } = resolveBattle(room.host, room.guest);
 
-  broadcastRoom(room, 'impact_result', { impactResult });
-
-  broadcastRoom(room, 'match_result', {
-    winner: impactResult.winner,
-    impactResult,
-  });
+  broadcastRoom(room, 'timing_result', { timingResult });
+  broadcastRoom(room, 'battle_result', { battleResult, timingResult });
 
   room.resultTimer = setTimeout(() => {
     room.phase = 'finished';
@@ -135,8 +126,6 @@ function resolveMatch(room) {
 }
 
 function startRematch(room) {
-  room.host.rematchRequest = false;
-  room.guest.rematchRequest = false;
   enterWaitingPhase(room);
 }
 
@@ -221,17 +210,18 @@ wss.on('connection', (ws) => {
         player.ready = Boolean(msg.ready);
         player.rematchRequest = false;
         broadcastRoom(room, 'ready_update', { role, ready: player.ready, ...waitingSnapshot(room) });
-        if (room.phase === 'waiting' && bothReady(room)) startCountdown(room);
+        if (bothReady(room)) startCountdown(room);
         break;
       }
 
-      case 'update_lance': {
+      case 'set_tap': {
         const room = rooms.get(roomCode);
         if (!room || room.phase !== 'charge') return;
         const player = role === 'host' ? room.host : room.guest;
-        if (!player || typeof msg.lanceHeight !== 'number') return;
-        player.lanceHeight = clamp(msg.lanceHeight, 0, 1);
-        broadcastRoom(room, 'lance_update', { role, lanceHeight: player.lanceHeight }, player.ws);
+        if (!player || player.tapTiming != null) return;
+        if (typeof msg.tapTiming === 'number') {
+          player.tapTiming = clamp(msg.tapTiming, 0, 1);
+        }
         break;
       }
 
